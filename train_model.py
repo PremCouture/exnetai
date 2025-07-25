@@ -233,14 +233,14 @@ class ModelTrainer:
                                'MACD', 'BollingerBandWidth']
         
         for feature in feature_names:
-            if any(prop in feature for prop in proprietary_features):
-                categories['proprietary'].append(feature)
-            elif 'interaction' in feature.lower() or '_x_' in feature:
+            if 'interaction' in feature.lower() or '_x_' in feature.lower():
                 categories['interaction'].append(feature)
             elif 'regime' in feature.lower():
                 categories['regime'].append(feature)
             elif 'transformed' in feature.lower() or '_sq' in feature or '_log' in feature:
                 categories['transformed'].append(feature)
+            elif any(prop in feature for prop in proprietary_features):
+                categories['proprietary'].append(feature)
             elif any(macro in feature for macro in ['GDP', 'UNRATE', 'CPI', 'PAYEMS', 'FEDFUNDS']):
                 categories['macro'].append(feature)
             else:

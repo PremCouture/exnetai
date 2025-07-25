@@ -58,10 +58,8 @@ class TestModelTrainer:
         assert not X.isnull().any().any()
     
     def test_prepare_training_data_insufficient_samples(self, trainer, insufficient_stock_data):
-        X, y = trainer.prepare_training_data(insufficient_stock_data, 5, min_samples_per_stock=100)
-        
-        assert len(X) == 0
-        assert len(y) == 0
+        with pytest.raises(ValueError, match="No valid training data found"):
+            trainer.prepare_training_data(insufficient_stock_data, 5, min_samples_per_stock=100)
     
     def test_prepare_training_data_missing_target(self, trainer, sample_stock_data):
         for ticker in sample_stock_data:
@@ -78,13 +76,13 @@ class TestModelTrainer:
         mock_rf = Mock()
         mock_rf.fit.return_value = None
         mock_rf.score.return_value = 0.85
-        mock_rf.predict.return_value = np.array([0, 1, 0, 1])
-        mock_rf.feature_importances_ = np.random.rand(5)
+        mock_rf.predict.return_value = np.array([0, 1] * 40)  # Match test set size
+        mock_rf.feature_importances_ = np.random.rand(6)  # Match feature count
         mock_rf_class.return_value = mock_rf
         
         mock_scaler = Mock()
-        mock_scaler.fit_transform.return_value = np.random.rand(160, 5)
-        mock_scaler.transform.return_value = np.random.rand(40, 5)
+        mock_scaler.fit_transform.return_value = np.random.rand(160, 6)
+        mock_scaler.transform.return_value = np.random.rand(40, 6)
         mock_scaler_class.return_value = mock_scaler
         
         mock_explainer = Mock()
