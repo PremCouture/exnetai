@@ -658,7 +658,7 @@ def load_stock_data(ticker, csv_path=None):
         logger.error(f"Error loading {ticker}: {e}")
         return None
 
-def load_all_stock_data(tickers, csv_path=None, use_cache=True):
+def load_all_stock_data(tickers, csv_path=None):
     """Load stock data for multiple tickers with validation and batch processing"""
     stock_data = {}
 
@@ -1752,7 +1752,7 @@ class EnhancedTradingModel:
         for ticker, df in stock_data.items():
             try:
                 # Create features
-                features = create_all_features(df, self.feature_metadata.get(prediction_days, {}), use_cache=True)
+                features = create_all_features(df, self.feature_metadata.get(prediction_days, {}))
 
                 # Prepare data
                 X, y, returns = self.prepare_training_data(df, features, prediction_days)
@@ -1882,7 +1882,7 @@ class EnhancedTradingModel:
                 continue
 
             # Create features - this now includes ALL proprietary features
-            features = create_all_features(df, macro_metadata, use_cache=True)
+            features = create_all_features(df, macro_metadata)
 
             # Prepare training data
             X, y, returns = self.prepare_training_data(df, features, prediction_days)
@@ -2362,7 +2362,7 @@ def generate_signals_with_shap(stock_data, ml_model, macro_metadata, timeframe=3
 
         try:
             # Create features - includes ALL proprietary features
-            features = create_all_features(df, macro_metadata, use_cache=True)
+            features = create_all_features(df, macro_metadata)
             if features.empty or len(features) == 0:
                 failed_signals += 1
                 continue
@@ -2947,7 +2947,7 @@ def load_data():
     print(f"\nProcessing {len(all_tickers)} stocks: {', '.join(all_tickers)}")
 
     # Load stock data with caching
-    stock_data = load_all_stock_data(all_tickers, use_cache=True)
+    stock_data = load_all_stock_data(all_tickers)
 
     if not stock_data:
         print("ERROR: No stock data loaded. Check file paths and stock IDs.")
@@ -2973,7 +2973,7 @@ def load_data():
 
     # Load FRED data with caching
     print("\n2. Loading FRED economic indicators...")
-    fred_data_raw = load_fred_data_from_folders(use_cache=True)
+    fred_data_raw = load_fred_data_from_folders()
 
     if not fred_data_raw:
         print("WARNING: No FRED data loaded. Continuing with technical analysis only.")
@@ -2992,7 +2992,7 @@ def load_data():
 
     return merged_stock_data, macro_metadata, stock_data
 
-def generate_features(merged_stock_data, macro_metadata, use_cache=True):
+def generate_features(merged_stock_data, macro_metadata):
     """Optimized feature generation with vectorization and caching"""
     print("\nGenerating features with caching optimization...")
     
