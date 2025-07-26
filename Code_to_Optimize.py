@@ -34,9 +34,9 @@ from scipy.stats import rankdata
 import time
 import gc
 
-# Global cache for expensive operations
-FEATURE_CACHE = {}
+# Global caches for optimization
 DATA_CACHE = {}
+FEATURE_CACHE = {}
 SHAP_CACHE = {}
 EXPLAINER_CACHE = {}
 
@@ -607,10 +607,16 @@ def standardize_columns(df):
 
     return df
 
-def load_stock_data(ticker, csv_path=None):
-    """Load individual stock data with enhanced error handling"""
+def load_stock_data(ticker, csv_path=None, use_cache=True):
+    """Load individual stock data with enhanced error handling and caching"""
     if csv_path is None:
         csv_path = CONFIG['STOCK_DATA_PATH']
+    
+    if use_cache:
+        cache_key = f"stock_{ticker}_{csv_path}"
+        if cache_key in DATA_CACHE:
+            logger.debug(f"Using cached data for {ticker}")
+            return DATA_CACHE[cache_key].copy()
 
     try:
         stock_id = get_stock_id_from_ticker(ticker)
@@ -657,6 +663,13 @@ def load_stock_data(ticker, csv_path=None):
     except Exception as e:
         logger.error(f"Error loading {ticker}: {e}")
         return None
+    
+    if use_cache and df is not None:
+        cache_key = f"stock_{ticker}_{csv_path}"
+        DATA_CACHE[cache_key] = df.copy()
+        logger.debug(f"Cached data for {ticker}")
+    
+    return df
 
 def load_all_stock_data(tickers, csv_path=None, use_cache=True):
     """Load stock data for multiple tickers with validation and batch processing"""
@@ -676,9 +689,15 @@ def load_all_stock_data(tickers, csv_path=None, use_cache=True):
     logger.info(f"Successfully loaded {len(stock_data)} stocks")
     return stock_data
 
-def load_fred_data_from_folders():
-    """Load FRED data from folder structure"""
+def load_fred_data_from_folders(use_cache=True):
+    """Load FRED data from folder structure with caching"""
     fred_data = {}
+    
+    if use_cache:
+        cache_key = f"fred_data_{CONFIG['FRED_ROOT_PATH']}"
+        if cache_key in DATA_CACHE:
+            logger.debug("Using cached FRED data")
+            return DATA_CACHE[cache_key].copy()
 
     if not os.path.exists(CONFIG['FRED_ROOT_PATH']):
         logger.warning(f"FRED path not found: {CONFIG['FRED_ROOT_PATH']}")
@@ -757,6 +776,12 @@ def load_fred_data_from_folders():
                         continue
 
     logger.info(f"Loaded {len(fred_data)} FRED indicators")
+    
+    if use_cache and fred_data:
+        cache_key = f"fred_data_{CONFIG['FRED_ROOT_PATH']}"
+        DATA_CACHE[cache_key] = fred_data.copy()
+        logger.debug("Cached FRED data")
+    
     return fred_data
 
 # ==========================
@@ -1535,10 +1560,17 @@ def create_macro_features(df, macro_metadata, debug=False):
 
     return features
 
-def create_all_features(df, macro_metadata=None):
-    """Create all features: technical, proprietary, macro, regime, transformations, and interactions"""
-
+def create_all_features(df, macro_metadata=None, use_cache=True):
+    """Create all features: technical, proprietary, macro, regime, transformations, and interactions with caching"""
+    
     logger.info("Creating comprehensive feature set with ALL proprietary features...")
+    
+    if use_cache:
+        data_hash = hash(str(df.values.tobytes()) + str(macro_metadata))
+        cache_key = f"features_{data_hash}"
+        if cache_key in FEATURE_CACHE:
+            logger.debug("Using cached features")
+            return FEATURE_CACHE[cache_key].copy()
 
     # 1. Technical features
     tech_features = create_technical_features(df)
@@ -1622,6 +1654,12 @@ def create_all_features(df, macro_metadata=None):
         logger.warning(f"Missing proprietary features in final set: {missing_proprietary}")
     else:
         logger.info("✓ All proprietary features successfully included!")
+
+    if use_cache and not all_features.empty:
+        data_hash = hash(str(df.values.tobytes()) + str(macro_metadata))
+        cache_key = f"features_{data_hash}"
+        FEATURE_CACHE[cache_key] = all_features.copy()
+        logger.debug("Cached features")
 
     return all_features
 
