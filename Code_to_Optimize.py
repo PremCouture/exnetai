@@ -242,7 +242,7 @@ FRED_METADATA = {
     }
 }
 
-# FRED indicator mapping from folder names to readable names
+# FRED indicator mapping from folder names to readable names - COMPREHENSIVE VERSION
 FRED_INDICATOR_MAP = {
     'USREC_1': 'NBER Recession Indicator',
     'USPHCI_1': 'Housing Cost Index',
@@ -253,6 +253,13 @@ FRED_INDICATOR_MAP = {
     'JHDUSRGDPBR_1': 'GDP-Based Recession Risk',
     'CPIAUCSL_1': 'Consumer Price Index',
     'AMERIBOR_1': 'AMERIBOR Rate',
+    'GDP': 'Gross Domestic Product',
+    'DGS10': '10-Year Treasury Rate',
+    'RSAFS': 'Retail Sales',
+    'FredFunds': 'Fed Funds Rate',
+    'ICSA': 'Initial Jobless Claims',
+    'UMCSENT': 'Consumer Sentiment Index',
+    'STLFS12': 'St. Louis Financial Stress Index'
 }
 
 # ==========================
@@ -300,17 +307,47 @@ def load_all_stock_and_fred_data_enhanced(stock_path, fred_root, use_cache=True)
 
     logger.info(f"🔍 Loading FRED indicators from: {fred_root}")
     if os.path.exists(fred_root):
-        for folder in os.listdir(fred_root):
+        for folder in sorted(os.listdir(fred_root)):
             folder_path = os.path.join(fred_root, folder)
-            csv_path = os.path.join(folder_path, 'obs._by_real-time_period.csv')
-            if os.path.isdir(folder_path) and folder.endswith('_1') and os.path.exists(csv_path):
-                try:
-                    df = pd.read_csv(csv_path)
-                    indicator = get_fred_name_from_folder(folder)
-                    fred_data[indicator] = df
-                    logger.info(f"✅ [FRED] {folder}/obs._by_real-time_period.csv → {indicator} ({df.shape[0]} rows)")
-                except Exception as e:
-                    logger.warning(f"❌ Failed to load FRED file in {folder}: {e}")
+            if not os.path.isdir(folder_path):
+                continue
+            
+            csv_files = [f for f in os.listdir(folder_path) if f.endswith('.csv')]
+            if not csv_files:
+                logger.debug(f"⚠️ Skipped (no CSV): {folder}")
+                continue
+            
+            csv_path = os.path.join(folder_path, csv_files[0])
+            try:
+                df = pd.read_csv(csv_path)
+                readable_name = get_fred_name_from_folder(folder)
+                
+                if len(df.columns) >= 2:
+                    date_col = df.columns[0]
+                    value_col = df.columns[1]
+                    
+                    for col in df.columns:
+                        col_lower = col.lower()
+                        if any(d in col_lower for d in ['date', 'time', 'period']):
+                            date_col = col
+                        elif col != date_col and any(v in col_lower for v in ['value', 'val', folder.replace('_1', '').lower()]):
+                            value_col = col
+                    
+                    standardized_df = pd.DataFrame({
+                        'Date': pd.to_datetime(df[date_col], errors='coerce'),
+                        'Value': pd.to_numeric(df[value_col], errors='coerce')
+                    }).dropna()
+                    
+                    if len(standardized_df) > 0:
+                        fred_data[readable_name] = standardized_df
+                        logger.info(f"✅ [FRED] {folder}/{csv_files[0]} → {readable_name} ({standardized_df.shape[0]} rows)")
+                    else:
+                        logger.warning(f"⚠️ No valid data in {folder}/{csv_files[0]}")
+                else:
+                    logger.warning(f"⚠️ Insufficient columns in {folder}/{csv_files[0]}")
+                    
+            except Exception as e:
+                logger.warning(f"❌ Failed to load FRED file in {folder}: {e}")
     else:
         logger.warning(f"⚠️ FRED root path does not exist: {fred_root}")
 
