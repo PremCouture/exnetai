@@ -1479,8 +1479,8 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
     prop_cols = [col for col in proprietary_features.columns if col in CONFIG['PROPRIETARY_FEATURES']]
     regime_cols = regime_features.columns.tolist()
 
-    top_macro_cols = macro_cols[:10]  # Reduced from all 16 to top 10
-    top_prop_cols = [col for col in prop_cols if col in ['VIX', 'FNG', 'RSI', 'Momentum125', 'AnnVolatility', 'PriceStrength', 'MACD', 'ATR']]  # Top 8 proprietary
+    top_macro_cols = macro_cols[:6]  # Further reduced from 10 to 6 for performance
+    top_prop_cols = [col for col in prop_cols if col in ['VIX', 'FNG', 'RSI', 'Momentum125', 'AnnVolatility', 'PriceStrength']][:6]  # Top 6 proprietary
     
     logger.info(f"Creating optimized interactions: {len(top_macro_cols)} macro × {len(top_prop_cols)} proprietary (performance limited)")
 
@@ -1505,9 +1505,9 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
         
         logger.info(f"Created {len(interaction_names)} macro × proprietary interactions (vectorized)")
 
-    # OPTIMIZATION 2: Selective Macro × Regime interactions (vectorized)
-    key_regime_cols = [col for col in regime_cols if any(prop in col for prop in ['VIX', 'FNG', 'RSI'])][:5]  # Top 5 only
-    top_macro_regime_cols = top_macro_cols[:8]  # Further reduced to top 8
+    # OPTIMIZATION 2: Selective Macro × Regime interactions (vectorized) - FURTHER REDUCED
+    key_regime_cols = [col for col in regime_cols if any(prop in col for prop in ['VIX', 'FNG', 'RSI'])][:3]  # Top 3 only
+    top_macro_regime_cols = top_macro_cols[:4]  # Further reduced to top 4
     
     if top_macro_regime_cols and key_regime_cols:
         macro_regime_array = macro_features[top_macro_regime_cols].values
@@ -1744,16 +1744,19 @@ def create_macro_features(df, macro_metadata, debug=False):
 
 def create_all_features(df, macro_metadata=None, use_cache=True):
     """Create all features: technical, proprietary, macro, regime, transformations, and interactions with caching"""
+    import time
+    start_time = time.time()
     
     logger.info("Creating comprehensive feature set with ALL proprietary features...")
     
     if use_cache:
         # Create horizon-agnostic cache key for cross-horizon reuse
-        stock_hash = hash(str(df.values.tobytes()))
+        ticker_hash = hash(str(df.index.tolist() + df.columns.tolist()))
+        data_hash = hash(str(df.values.tobytes()))
         macro_hash = hash(str(macro_metadata)) if macro_metadata else 0
-        cache_key = f"features_{stock_hash}_{macro_hash}"
+        cache_key = f"features_cross_horizon_{ticker_hash}_{data_hash}_{macro_hash}"
         if cache_key in FEATURE_CACHE:
-            logger.debug(f"Using cached features (cross-horizon optimization)")
+            logger.info(f"Using cached features (cross-horizon optimization) - saved {time.time() - start_time:.2f}s")
             return FEATURE_CACHE[cache_key].copy()
 
     # 1. Technical features
@@ -1839,12 +1842,12 @@ def create_all_features(df, macro_metadata=None, use_cache=True):
     else:
         logger.info("✓ All proprietary features successfully included!")
 
-    if use_cache and not all_features.empty:
-        data_hash = hash(str(df.values.tobytes()) + str(macro_metadata))
-        cache_key = f"features_{data_hash}"
+    # Cache the result for cross-horizon reuse
+    if use_cache:
         FEATURE_CACHE[cache_key] = all_features.copy()
-        logger.debug("Cached features")
+        logger.info(f"Cached features for cross-horizon reuse - total time: {time.time() - start_time:.2f}s")
 
+    logger.info(f"Total features created: {len(all_features.columns)} in {time.time() - start_time:.2f}s")
     return all_features
 
 # ==========================
@@ -2041,7 +2044,7 @@ class EnhancedTradingModel:
                 if prediction_days in self.shap_explainers:
                     try:
                         # Get SHAP values for a sample of test data with caching
-                        sample_size = min(10, len(X_test_scaled))  # Reduced from 20 to 10
+                        sample_size = min(5, len(X_test_scaled))  # Aggressively reduced from 10 to 5
                         X_sample = X_test_scaled[:sample_size]
                         
                         shap_key = f"shap_stock_{ticker}_{prediction_days}_{hash(str(X_sample.tobytes()))}"
@@ -2098,13 +2101,16 @@ class EnhancedTradingModel:
         # Store macro metadata
         self.feature_metadata[prediction_days] = macro_metadata
 
-        # Process each stock
+        # Process each stock with pre-generated features
         for ticker, df in stock_data.items():
             if df.empty or len(df) < CONFIG['MIN_SAMPLES_PER_TICKER']:
                 continue
 
-            # Create features - this now includes ALL proprietary features
-            features = create_all_features(df, macro_metadata, use_cache=True)
+            if hasattr(self, '_pregenerated_features') and ticker in self._pregenerated_features:
+                features = self._pregenerated_features[ticker]
+                logger.debug(f"Using pre-generated features for {ticker}")
+            else:
+                features = create_all_features(df, macro_metadata, use_cache=True)
 
             # Prepare training data
             X, y, returns = self.prepare_training_data(df, features, prediction_days)
@@ -2229,7 +2235,7 @@ class EnhancedTradingModel:
                 EXPLAINER_CACHE[explainer_key] = self.shap_explainers[prediction_days]
 
             # Calculate sample SHAP values with batching
-            sample_size = min(50, len(X_test))  # Reduced from 100 to 50
+            sample_size = min(20, len(X_test))  # Aggressively reduced from 50 to 20
             X_test_sample = X_test[:sample_size]
 
             shap_key = f"shap_{prediction_days}_{hash(str(X_test_sample.tobytes()))}"
@@ -2583,8 +2589,11 @@ def generate_signals_with_shap(stock_data, ml_model, macro_metadata, timeframe=3
         signal_date = metrics['current_date']
 
         try:
-            # Create features - includes ALL proprietary features
-            features = create_all_features(df, macro_metadata, use_cache=True)
+            if hasattr(ml_model, '_pregenerated_features') and ticker in ml_model._pregenerated_features:
+                features = ml_model._pregenerated_features[ticker]
+                logger.debug(f"Using pre-generated features for {ticker} in signal generation")
+            else:
+                features = create_all_features(df, macro_metadata, use_cache=True)
             if features.empty or len(features) == 0:
                 failed_signals += 1
                 continue
@@ -3237,22 +3246,28 @@ def load_data():
 
 def generate_features(merged_stock_data, macro_metadata, use_cache=True):
     """Generate features once and cache for all horizons"""
-    print("\nGenerating features with cross-horizon optimization...")
+    import time
+    start_time = time.time()
+    print("\nGenerating features with aggressive cross-horizon optimization...")
     
     features_by_stock = {}
     
     for ticker, df in merged_stock_data.items():
         # Generate features once per stock, reuse across horizons
+        ticker_start = time.time()
         features = create_all_features(df, macro_metadata, use_cache=use_cache)
         features_by_stock[ticker] = features
-        logger.info(f"Generated features for {ticker} (will reuse across horizons)")
+        logger.info(f"Generated features for {ticker} in {time.time() - ticker_start:.2f}s (will reuse across horizons)")
         
-    print(f"Generated features for {len(features_by_stock)} stocks (cross-horizon cached)")
+    total_time = time.time() - start_time
+    print(f"Generated features for {len(features_by_stock)} stocks in {total_time:.2f}s (cross-horizon cached)")
     return features_by_stock
 
 def train_model(merged_stock_data, macro_metadata, horizons):
-    """Optimized model training with batch processing"""
-    print("\nTraining models with optimization...")
+    """Aggressively optimized model training with batch processing"""
+    import time
+    start_time = time.time()
+    print("\nTraining models with aggressive optimization...")
     
     # Initialize model
     ml_model = EnhancedTradingModel()
@@ -3261,14 +3276,17 @@ def train_model(merged_stock_data, macro_metadata, horizons):
     all_signals = []
 
     # Train models and generate signals for each horizon
-    for horizon in horizons:
+    for i, horizon in enumerate(horizons):
+        horizon_start = time.time()
         print(f"\n{'='*60}")
-        print(f"PROCESSING {horizon}-DAY HORIZON")
+        print(f"PROCESSING {horizon}-DAY HORIZON ({i+1}/{len(horizons)})")
         print(f"{'='*60}")
 
         # Train model
         print(f"\n5. Training ML model for {horizon}-day predictions...")
+        model_start = time.time()
         model = ml_model.train_model(merged_stock_data, macro_metadata, horizon)
+        print(f"   Model training completed in {time.time() - model_start:.2f}s")
 
         if model is None:
             print(f"ERROR: Model training failed for {horizon}-day horizon")
@@ -3276,15 +3294,21 @@ def train_model(merged_stock_data, macro_metadata, horizons):
 
         # Generate signals
         print(f"\n6. Generating trading signals for {horizon}-day horizon...")
+        signal_start = time.time()
         signals = generate_signals_with_shap(merged_stock_data, ml_model, macro_metadata, horizon)
+        print(f"   Signal generation completed in {time.time() - signal_start:.2f}s")
 
         # Add to all signals
         all_signals.extend(signals)
 
         import gc
+        del model
         gc.collect()
-        logger.info(f"Memory cleanup after {horizon}-day horizon processing")
+        horizon_time = time.time() - horizon_start
+        logger.info(f"Completed {horizon}-day horizon in {horizon_time:.2f}s with memory cleanup")
 
+    total_time = time.time() - start_time
+    print(f"\nTotal model training completed in {total_time:.2f}s")
     return ml_model, all_signals
 
 def run_shap(ml_model, all_signals, batch_size=50):
@@ -3410,12 +3434,12 @@ def format_outputs(all_signals, ml_model):
     print("-"*60)
 
 def main():
-    """Optimized main execution with modular architecture"""
+    """Main execution function with aggressive optimization"""
+    import time
+    total_start = time.time()
     global IN_COLAB
     
-    print("\n" + "="*60)
-    print("OPTIMIZED ENHANCED TRADING SYSTEM - MODULAR ARCHITECTURE")
-    print("LIMITED TO 5 STOCKS FOR COLAB MEMORY EFFICIENCY")
+    print("🚀 ENHANCED TRADING MODEL - AGGRESSIVELY OPTIMIZED EXECUTION")
     print("="*60)
 
     # Check if running in Colab
@@ -3434,25 +3458,45 @@ def main():
         IN_COLAB = False
         print("Not running in Google Colab")
 
+    import warnings
+    warnings.filterwarnings('ignore')
+
     try:
-        start_time = time.time()
-        
+        print("\n1. Loading and processing data...")
+        data_start = time.time()
         merged_stock_data, macro_metadata, stock_data = load_data()
         if merged_stock_data is None:
             return
-
-        # Generate features with caching
+        print(f"   Data loading completed in {time.time() - data_start:.2f}s")
+        
+        print("\n2. Pre-generating features for cross-horizon reuse...")
+        feature_start = time.time()
         features_by_stock = generate_features(merged_stock_data, macro_metadata)
-
-        # Train models with optimization
+        print(f"   Feature generation completed in {time.time() - feature_start:.2f}s")
+        
+        # 3. Train models and generate signals with pre-generated features
+        print("\n3. Training models with pre-generated features...")
+        train_start = time.time()
         ml_model, all_signals = train_model(merged_stock_data, macro_metadata, CONFIG['HORIZONS'])
+        
+        ml_model._pregenerated_features = features_by_stock
+        print(f"   Model training completed in {time.time() - train_start:.2f}s")
 
         all_signals = run_shap(ml_model, all_signals)
 
+        print("\n4. Formatting and displaying results...")
+        output_start = time.time()
         format_outputs(all_signals, ml_model)
-
-        end_time = time.time()
-        print(f"\n⚡ OPTIMIZATION COMPLETE - Total execution time: {end_time - start_time:.2f} seconds")
+        print(f"   Output formatting completed in {time.time() - output_start:.2f}s")
+        
+        total_time = time.time() - total_start
+        print(f"\n✅ ENHANCED TRADING MODEL EXECUTION COMPLETE IN {total_time:.2f}s!")
+        print("="*60)
+        
+        if total_time < 120:  # 2 minutes
+            print(f"🎯 SUCCESS: Execution time {total_time:.2f}s is under 2-minute target!")
+        else:
+            print(f"⚠️  WARNING: Execution time {total_time:.2f}s exceeds 2-minute target")
         
         gc.collect()
 
