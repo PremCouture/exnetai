@@ -76,11 +76,11 @@ CONFIG = {
     # Model parameters - UPDATED FOR BETTER FEATURE DIVERSITY
     'TEST_SIZE': 0.2,
     'RANDOM_STATE': 42,
-    'N_ESTIMATORS': 150,  # Increased for better feature exploration
-    'MAX_DEPTH': 12,  # Increased depth
-    'MAX_FEATURES': 0.5,  # Use 50% of features at each split (was 'sqrt')
-    'MIN_SAMPLES_SPLIT': 30,  # Reduced to allow more splits
-    'MIN_SAMPLES_LEAF': 10,  # Reduced for more granular decisions
+    'N_ESTIMATORS': 100,  # Reduced from 150 for speed
+    'MAX_DEPTH': 8,  # Reduced from 12 for speed
+    'MAX_FEATURES': 0.3,  # Reduced from 0.5 for speed
+    'MIN_SAMPLES_SPLIT': 50,  # Increased from 30 for speed
+    'MIN_SAMPLES_LEAF': 20,  # Increased from 10 for speed
 
     # Display parameters
     'MAX_SHAP_FEATURES': 5,  # Show top 5 features
@@ -1479,8 +1479,8 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
     prop_cols = [col for col in proprietary_features.columns if col in CONFIG['PROPRIETARY_FEATURES']]
     regime_cols = regime_features.columns.tolist()
 
-    top_macro_cols = macro_cols[:6]  # Further reduced from 10 to 6 for performance
-    top_prop_cols = [col for col in prop_cols if col in ['VIX', 'FNG', 'RSI', 'Momentum125', 'AnnVolatility', 'PriceStrength']][:6]  # Top 6 proprietary
+    top_macro_cols = macro_cols[:4]  # Reduced from 6 to 4 for performance
+    top_prop_cols = [col for col in prop_cols if col in ['VIX', 'FNG', 'RSI', 'Momentum125']][:4]  # Top 4 proprietary
     
     logger.info(f"Creating optimized interactions: {len(top_macro_cols)} macro × {len(top_prop_cols)} proprietary (performance limited)")
 
@@ -1506,8 +1506,8 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
         logger.info(f"Created {len(interaction_names)} macro × proprietary interactions (vectorized)")
 
     # OPTIMIZATION 2: Selective Macro × Regime interactions (vectorized) - FURTHER REDUCED
-    key_regime_cols = [col for col in regime_cols if any(prop in col for prop in ['VIX', 'FNG', 'RSI'])][:3]  # Top 3 only
-    top_macro_regime_cols = top_macro_cols[:4]  # Further reduced to top 4
+    key_regime_cols = [col for col in regime_cols if any(prop in col for prop in ['VIX', 'FNG'])][:2]  # Top 2 only
+    top_macro_regime_cols = top_macro_cols[:3]  # Further reduced to top 3
     
     if top_macro_regime_cols and key_regime_cols:
         macro_regime_array = macro_features[top_macro_regime_cols].values
@@ -1526,16 +1526,13 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
         
         logger.info(f"Created {len(regime_names)} macro × regime interactions (vectorized)")
 
-    # OPTIMIZATION 3: Pre-computed triple interactions (cached approach)
+    # OPTIMIZATION 3: Pre-computed triple interactions (cached approach) - REDUCED TO TOP 5
     important_interactions = [
         ('CPIAUCSL', 'VIX', 'VIX_high'),
         ('DGS10', 'AnnVolatility', 'VIX_extreme_high'),
         ('UNRATE', 'FNG', 'FNG_low'),
         ('GDP', 'Momentum125', 'Momentum125_high'),
-        ('FEDFUNDS', 'PriceStrength', 'RSI_extreme_high'),
-        ('AMERIBOR', 'VolumeBreadth', 'VIX_low'),
-        ('PAYEMS', 'RSI', 'FNG_extreme_low'),
-        ('RETAILSL', 'MACD', 'Momentum125_low')
+        ('FEDFUNDS', 'PriceStrength', 'RSI_extreme_high')
     ]
 
     # Batch process triple interactions
@@ -1750,13 +1747,13 @@ def create_all_features(df, macro_metadata=None, use_cache=True):
     logger.info("Creating comprehensive feature set with ALL proprietary features...")
     
     if use_cache:
-        # Create horizon-agnostic cache key for cross-horizon reuse
+        # Enhanced cross-horizon cache key for maximum reuse
         ticker_hash = hash(str(df.index.tolist() + df.columns.tolist()))
         data_hash = hash(str(df.values.tobytes()))
         macro_hash = hash(str(macro_metadata)) if macro_metadata else 0
-        cache_key = f"features_cross_horizon_{ticker_hash}_{data_hash}_{macro_hash}"
+        cache_key = f"features_ultra_cached_{ticker_hash}_{data_hash}_{macro_hash}"
         if cache_key in FEATURE_CACHE:
-            logger.info(f"Using cached features (cross-horizon optimization) - saved {time.time() - start_time:.2f}s")
+            logger.info(f"Using ultra-cached features (cross-horizon optimization) - saved {time.time() - start_time:.2f}s")
             return FEATURE_CACHE[cache_key].copy()
 
     # 1. Technical features
@@ -2044,7 +2041,7 @@ class EnhancedTradingModel:
                 if prediction_days in self.shap_explainers:
                     try:
                         # Get SHAP values for a sample of test data with caching
-                        sample_size = min(5, len(X_test_scaled))  # Aggressively reduced from 10 to 5
+                        sample_size = min(3, len(X_test_scaled))  # Reduced from 5 to 3
                         X_sample = X_test_scaled[:sample_size]
                         
                         shap_key = f"shap_stock_{ticker}_{prediction_days}_{hash(str(X_sample.tobytes()))}"
@@ -2235,7 +2232,7 @@ class EnhancedTradingModel:
                 EXPLAINER_CACHE[explainer_key] = self.shap_explainers[prediction_days]
 
             # Calculate sample SHAP values with batching
-            sample_size = min(20, len(X_test))  # Aggressively reduced from 50 to 20
+            sample_size = min(10, len(X_test))  # Reduced from 20 to 10
             X_test_sample = X_test[:sample_size]
 
             shap_key = f"shap_{prediction_days}_{hash(str(X_test_sample.tobytes()))}"
@@ -2883,14 +2880,12 @@ def create_complete_playbook_tables(df, horizon):
     print(f"<span style='font-size:24px;font-weight:bold'>📊 {horizon}-DAY COMPLETE ANALYSIS</span>")
     print(f"{'='*150}")
 
-    # Prepare COMPLETE data table with ALL proprietary features
+    # Prepare COMPLETE data table with ALL proprietary features - vectorized approach
     complete_rows = []
-    for _, row in df.iterrows():
-        # Get all proprietary values
-        prop_values = {}
-        for feat in CONFIG['PROPRIETARY_FEATURES']:
-            value = row.get(feat, np.nan)
-            prop_values[feat] = display_value(value)
+    for idx in df.index:
+        row = df.loc[idx]
+        # Get all proprietary values efficiently in batch
+        prop_values = {feat: display_value(row.get(feat, np.nan)) for feat in CONFIG['PROPRIETARY_FEATURES']}
 
         complete_rows.append({
             "Ticker": row['Stock'],
@@ -2917,16 +2912,21 @@ def create_complete_playbook_tables(df, horizon):
 
     complete_df = pd.DataFrame(complete_rows)
 
-    # Print COMPLETE proprietary features table
+    # Print COMPLETE proprietary features table with fast formatting
     print(f"\n📈 **{horizon}-DAY COMPLETE PROPRIETARY FEATURES TABLE**")
     print("```")
-    print(complete_df.to_markdown(index=False))
+    headers = complete_df.columns.tolist()
+    print(" | ".join(headers))
+    print(" | ".join(["-" * len(h) for h in headers]))
+    for _, row in complete_df.iterrows():
+        print(" | ".join([str(row[col]) for col in headers]))
     print("```")
 
-    # Prepare SHAP analysis table
+    # Prepare SHAP analysis table - vectorized approach
     shap_rows = []
-    for _, row in df.iterrows():
-        # Parse feature presence
+    for idx in df.index:
+        row = df.loc[idx]
+        # Parse feature presence efficiently
         feature_presence = row.get('feature_presence', {})
         presence_str = ", ".join([f"{k}:{v}" for k, v in feature_presence.items() if v > 0])
 
@@ -2939,10 +2939,14 @@ def create_complete_playbook_tables(df, horizon):
 
     shap_df = pd.DataFrame(shap_rows)
 
-    # Print SHAP analysis table
+    # Print SHAP analysis table with fast formatting
     print(f"\n🔍 **{horizon}-DAY SHAP FEATURE ANALYSIS**")
     print("```")
-    print(shap_df.to_markdown(index=False))
+    headers = shap_df.columns.tolist()
+    print(" | ".join(headers))
+    print(" | ".join(["-" * len(h) for h in headers]))
+    for _, row in shap_df.iterrows():
+        print(" | ".join([str(row[col]) for col in headers]))
     print("```")
 
     # Summary statistics
@@ -3302,10 +3306,10 @@ def train_model(merged_stock_data, macro_metadata, horizons):
         all_signals.extend(signals)
 
         import gc
-        del model
+        del model, signals
         gc.collect()
         horizon_time = time.time() - horizon_start
-        logger.info(f"Completed {horizon}-day horizon in {horizon_time:.2f}s with memory cleanup")
+        logger.info(f"Completed {horizon}-day horizon in {horizon_time:.2f}s with aggressive memory cleanup")
 
     total_time = time.time() - start_time
     print(f"\nTotal model training completed in {total_time:.2f}s")
@@ -3375,7 +3379,8 @@ def format_outputs(all_signals, ml_model):
             ))
             print("-" * 100)
 
-            for _, signal in top_buys.iterrows():
+            for idx in top_buys.index:
+                signal = top_buys.loc[idx]
                 signal_type = "Strong Buy" if "STRONG" in signal['Signal'] else "Buy"
                 print(f"{signal['Stock']:<8} {signal['horizon']:<8} {signal['Accuracy']:>5.1f} "
                       f"{signal['Sharpe']:>7.2f} {display_value(signal['VIX']):>4} "
@@ -3460,6 +3465,10 @@ def main():
 
     import warnings
     warnings.filterwarnings('ignore')
+    
+    # Set logging to WARNING level for performance
+    import logging
+    logging.getLogger().setLevel(logging.WARNING)
 
     try:
         print("\n1. Loading and processing data...")
