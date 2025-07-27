@@ -410,6 +410,10 @@ def identify_binary_features(df, threshold=0.05):
 
 def calculate_rsi(prices, period=14):
     """Calculate RSI (Relative Strength Index)"""
+    # Convert to pandas Series if it's a numpy array
+    if isinstance(prices, np.ndarray):
+        prices = pd.Series(prices)
+    
     delta = prices.diff()
     gain = delta.where(delta > 0, 0)
     loss = -delta.where(delta < 0, 0)
@@ -424,6 +428,10 @@ def calculate_rsi(prices, period=14):
 
 def calculate_macd(prices, fast=12, slow=26, signal=9):
     """Calculate MACD (Moving Average Convergence Divergence)"""
+    # Convert to pandas Series if it's a numpy array
+    if isinstance(prices, np.ndarray):
+        prices = pd.Series(prices)
+    
     ema_fast = prices.ewm(span=fast).mean()
     ema_slow = prices.ewm(span=slow).mean()
 
@@ -456,6 +464,10 @@ def calculate_macd(prices, fast=12, slow=26, signal=9):
 
 def calculate_bollinger_bands(prices, period=20, num_std=2):
     """Calculate Bollinger Bands"""
+    # Convert to pandas Series if it's a numpy array
+    if isinstance(prices, np.ndarray):
+        prices = pd.Series(prices)
+    
     sma = prices.rolling(window=period).mean()
     std = prices.rolling(window=period).std()
 
@@ -472,6 +484,14 @@ def calculate_bollinger_bands(prices, period=20, num_std=2):
 
 def calculate_atr(high, low, close, period=14):
     """Calculate Average True Range"""
+    # Convert to pandas Series if they are numpy arrays
+    if isinstance(high, np.ndarray):
+        high = pd.Series(high)
+    if isinstance(low, np.ndarray):
+        low = pd.Series(low)
+    if isinstance(close, np.ndarray):
+        close = pd.Series(close)
+    
     tr1 = high - low
     tr2 = abs(high - close.shift())
     tr3 = abs(low - close.shift())
@@ -483,6 +503,10 @@ def calculate_atr(high, low, close, period=14):
 
 def calculate_stochastic_rsi(rsi, period=14):
     """Calculate Stochastic RSI"""
+    # Convert to pandas Series if it's a numpy array
+    if isinstance(rsi, np.ndarray):
+        rsi = pd.Series(rsi)
+    
     rsi_min = rsi.rolling(window=period).min()
     rsi_max = rsi.rolling(window=period).max()
 
@@ -491,12 +515,28 @@ def calculate_stochastic_rsi(rsi, period=14):
 
 def calculate_obv(prices, volumes):
     """Calculate On Balance Volume"""
+    # Convert to pandas Series if they are numpy arrays
+    if isinstance(prices, np.ndarray):
+        prices = pd.Series(prices)
+    if isinstance(volumes, np.ndarray):
+        volumes = pd.Series(volumes)
+    
     price_change = prices.diff()
     obv = (volumes * np.sign(price_change)).cumsum()
     return obv
 
 def calculate_cmf(high, low, close, volume, period=20):
     """Calculate Chaikin Money Flow"""
+    # Convert to pandas Series if they are numpy arrays
+    if isinstance(high, np.ndarray):
+        high = pd.Series(high)
+    if isinstance(low, np.ndarray):
+        low = pd.Series(low)
+    if isinstance(close, np.ndarray):
+        close = pd.Series(close)
+    if isinstance(volume, np.ndarray):
+        volume = pd.Series(volume)
+    
     mf_multiplier = ((close - low) - (high - close)) / (high - low + 1e-8)
     mf_volume = mf_multiplier * volume
     cmf = mf_volume.rolling(period).sum() / volume.rolling(period).sum()
@@ -504,6 +544,14 @@ def calculate_cmf(high, low, close, volume, period=20):
 
 def calculate_adx(high, low, close, period=14):
     """Calculate Average Directional Index"""
+    # Convert to pandas Series if they are numpy arrays
+    if isinstance(high, np.ndarray):
+        high = pd.Series(high)
+    if isinstance(low, np.ndarray):
+        low = pd.Series(low)
+    if isinstance(close, np.ndarray):
+        close = pd.Series(close)
+    
     plus_dm = high.diff()
     minus_dm = low.diff().abs()
 
@@ -522,6 +570,14 @@ def calculate_adx(high, low, close, period=14):
 
 def calculate_williams_r(high, low, close, period=14):
     """Calculate Williams %R"""
+    # Convert to pandas Series if they are numpy arrays
+    if isinstance(high, np.ndarray):
+        high = pd.Series(high)
+    if isinstance(low, np.ndarray):
+        low = pd.Series(low)
+    if isinstance(close, np.ndarray):
+        close = pd.Series(close)
+    
     highest_high = high.rolling(period).max()
     lowest_low = low.rolling(period).min()
 
@@ -530,6 +586,14 @@ def calculate_williams_r(high, low, close, period=14):
 
 def calculate_cci(high, low, close, period=20):
     """Calculate Commodity Channel Index"""
+    # Convert to pandas Series if they are numpy arrays
+    if isinstance(high, np.ndarray):
+        high = pd.Series(high)
+    if isinstance(low, np.ndarray):
+        low = pd.Series(low)
+    if isinstance(close, np.ndarray):
+        close = pd.Series(close)
+    
     typical_price = (high + low + close) / 3
     sma = typical_price.rolling(period).mean()
     mad = typical_price.rolling(period).apply(lambda x: np.mean(np.abs(x - x.mean())))
@@ -539,6 +603,16 @@ def calculate_cci(high, low, close, period=20):
 
 def calculate_mfi(high, low, close, volume, period=14):
     """Calculate Money Flow Index"""
+    # Convert to pandas Series if they are numpy arrays
+    if isinstance(high, np.ndarray):
+        high = pd.Series(high)
+    if isinstance(low, np.ndarray):
+        low = pd.Series(low)
+    if isinstance(close, np.ndarray):
+        close = pd.Series(close)
+    if isinstance(volume, np.ndarray):
+        volume = pd.Series(volume)
+    
     typical_price = (high + low + close) / 3
     raw_money_flow = typical_price * volume
 
