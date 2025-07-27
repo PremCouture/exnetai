@@ -1176,13 +1176,9 @@ def create_proprietary_features(df):
             feature_cache['vix_calc'] = vol_30 * np.sqrt(252) * 100
         features['VIX'] = feature_cache['vix_calc'].fillna(20)
 
-    # FNG (Fear & Greed) - if not present, create synthetic
+    # FNG (Fear & Greed) - only include if present in data
     if 'FNG' in df.columns:
         features['FNG'] = df['FNG']
-    else:
-        if 'fng_calc' not in feature_cache:
-            feature_cache['fng_calc'] = 50 + (momentum_20 * 1000) - (vol_20 * 500)
-        features['FNG'] = feature_cache['fng_calc'].clip(0, 100).fillna(50)
 
     # RSI
     if 'RSI' in df.columns:
@@ -1230,21 +1226,13 @@ def create_proprietary_features(df):
             )
         features['VolumeBreadth'] = feature_cache['vol_breadth_calc'].fillna(1)
 
-    # Call/Put Ratio - if not present, use synthetic
+    # Call/Put Ratio - only include if present in data
     if 'CallPut' in df.columns:
         features['CallPut'] = df['CallPut']
-    else:
-        if 'callput_calc' not in feature_cache:
-            close_series = pd.Series(close_prices, index=df.index)
-            trend = close_series.rolling(20).mean() / close_series.rolling(50).mean()
-            feature_cache['callput_calc'] = 50 * trend
-        features['CallPut'] = feature_cache['callput_calc'].fillna(50)
 
-    # News Score - if not present, use 5 (neutral)
+    # News Score - only include if present in data
     if 'NewsScore' in df.columns:
         features['NewsScore'] = df['NewsScore']
-    else:
-        features['NewsScore'] = 5  # Neutral sentiment
 
     # MACD
     if 'MACD' in df.columns:
@@ -3112,6 +3100,9 @@ def load_data():
     """Optimized data loading with caching and batch processing"""
     print("\n1. Loading stock data with ALL proprietary features...")
     
+    # Initialize enhanced_fred_data to None for scope
+    enhanced_fred_data = None
+    
     # Get all CSV files from directory
     all_csv_files = []
     if os.path.exists(CONFIG['STOCK_DATA_PATH']):
@@ -3174,9 +3165,14 @@ def load_data():
         status = "✅" if count > 0 else "❌"
         print(f"{feat:<20} {count}/{len(stock_data):>20} {pct:>14.1f}% {status}")
 
-    # Load FRED data with caching
+    # Load FRED data with caching - use enhanced_fred_data if available
     print("\n2. Loading FRED economic indicators...")
-    fred_data_raw = load_fred_data_from_folders(use_cache=True)
+    if enhanced_fred_data:
+        logger.info("Using enhanced FRED data from directory scanning...")
+        fred_data_raw = enhanced_fred_data
+        print(f"   Using {len(fred_data_raw)} enhanced FRED indicators")
+    else:
+        fred_data_raw = load_fred_data_from_folders(use_cache=True)
 
     if not fred_data_raw:
         print("WARNING: No FRED data loaded. Continuing with technical analysis only.")
