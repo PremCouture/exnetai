@@ -242,9 +242,87 @@ FRED_METADATA = {
     }
 }
 
+# FRED indicator mapping from folder names to readable names
+FRED_INDICATOR_MAP = {
+    'USREC_1': 'NBER Recession Indicator',
+    'USPHCI_1': 'Housing Cost Index',
+    'PCEPI_1': 'Core PCE Price Index',
+    'PAYEMS_1': 'Non-Farm Payrolls',
+    'OPHNFB_1': 'Productivity: Output per Hour',
+    'MEHOINUSA672N_1': 'Median Household Income',
+    'JHDUSRGDPBR_1': 'GDP-Based Recession Risk',
+    'CPIAUCSL_1': 'Consumer Price Index',
+    'AMERIBOR_1': 'AMERIBOR Rate',
+}
+
 # ==========================
 # HELPER FUNCTIONS
 # ==========================
+
+def get_stock_name_from_id(file_id):
+    """Get stock ticker name from file ID using STOCK_ALTERNATIVE_NAMES mapping"""
+    for ticker, ids in STOCK_ALTERNATIVE_NAMES.items():
+        if file_id in ids:
+            return ticker
+    return None
+
+def get_fred_name_from_folder(folder):
+    """Get readable FRED indicator name from folder name"""
+    return FRED_INDICATOR_MAP.get(folder, folder)
+
+def load_all_stock_and_fred_data_enhanced(stock_path, fred_root, use_cache=True):
+    """Enhanced data loader that scans directories for all available files"""
+    stock_data = {}
+    fred_data = {}
+    
+    if use_cache:
+        cache_key = f"enhanced_loader_{stock_path}_{fred_root}"
+        if cache_key in DATA_CACHE:
+            logger.debug("Using cached enhanced data loader results")
+            return DATA_CACHE[cache_key]
+    
+    logger.info(f"🔍 Loading STOCK files from: {stock_path}")
+    if os.path.exists(stock_path):
+        for file in os.listdir(stock_path):
+            if file.endswith('.csv') and not file.endswith('.gsheet.csv'):
+                file_id = file.replace('.csv', '')
+                file_path = os.path.join(stock_path, file)
+                try:
+                    df = pd.read_csv(file_path)
+                    stock_name = get_stock_name_from_id(file_id)
+                    key = stock_name if stock_name else file_id
+                    stock_data[key] = df
+                    logger.info(f"✅ [Stock] {file} → {key} ({df.shape[0]} rows)")
+                except Exception as e:
+                    logger.warning(f"❌ Failed to load {file}: {e}")
+    else:
+        logger.warning(f"⚠️ Stock path does not exist: {stock_path}")
+
+    logger.info(f"🔍 Loading FRED indicators from: {fred_root}")
+    if os.path.exists(fred_root):
+        for folder in os.listdir(fred_root):
+            folder_path = os.path.join(fred_root, folder)
+            csv_path = os.path.join(folder_path, 'obs._by_real-time_period.csv')
+            if os.path.isdir(folder_path) and folder.endswith('_1') and os.path.exists(csv_path):
+                try:
+                    df = pd.read_csv(csv_path)
+                    indicator = get_fred_name_from_folder(folder)
+                    fred_data[indicator] = df
+                    logger.info(f"✅ [FRED] {folder}/obs._by_real-time_period.csv → {indicator} ({df.shape[0]} rows)")
+                except Exception as e:
+                    logger.warning(f"❌ Failed to load FRED file in {folder}: {e}")
+    else:
+        logger.warning(f"⚠️ FRED root path does not exist: {fred_root}")
+
+    logger.info(f"📊 Loaded {len(stock_data)} stock datasets")
+    logger.info(f"📊 Loaded {len(fred_data)} FRED indicators")
+    
+    result = (stock_data, fred_data)
+    
+    if use_cache:
+        DATA_CACHE[cache_key] = result
+        
+    return result
 
 def convert_np(obj):
     """Convert numpy types to Python types for JSON serialization"""
@@ -2986,6 +3064,19 @@ def load_data():
 
     # Load stock data with caching
     stock_data = load_all_stock_data(all_tickers, use_cache=True)
+
+    if not stock_data:
+        logger.info("No stock data loaded with ticker-based approach, trying enhanced directory scanning...")
+        enhanced_stock_data, enhanced_fred_data = load_all_stock_and_fred_data_enhanced(
+            CONFIG['STOCK_DATA_PATH'], 
+            CONFIG['FRED_ROOT_PATH'], 
+            use_cache=True
+        )
+        if enhanced_stock_data:
+            stock_data = enhanced_stock_data
+            logger.info(f"✅ Enhanced loader found {len(stock_data)} stocks")
+            if enhanced_fred_data:
+                logger.info(f"✅ Enhanced loader found {len(enhanced_fred_data)} FRED indicators")
 
     if not stock_data:
         print("ERROR: No stock data loaded. Check file paths and stock IDs.")
