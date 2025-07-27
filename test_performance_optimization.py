@@ -22,6 +22,9 @@ def test_performance_optimization():
         
         sample_df = pd.DataFrame({
             'Date': pd.date_range('2020-01-01', periods=100),
+            'Open': np.random.randn(100) + 100,
+            'High': np.random.randn(100) + 102,
+            'Low': np.random.randn(100) + 98,
             'Close': np.random.randn(100) + 100,
             'Volume': np.random.randint(1000, 10000, 100)
         })
