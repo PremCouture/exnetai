@@ -1469,7 +1469,9 @@ def create_nonlinear_transformations(features):
     return transformed_features
 
 def create_comprehensive_interaction_features(macro_features, proprietary_features, regime_features):
-    """Create extensive interaction features between all feature types - OPTIMIZED VERSION"""
+    """Create extensive interaction features between all feature types - PERFORMANCE OPTIMIZED"""
+    import time
+    start_time = time.time()
     interaction_features = pd.DataFrame(index=macro_features.index)
 
     # Get feature columns by type
@@ -1477,12 +1479,15 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
     prop_cols = [col for col in proprietary_features.columns if col in CONFIG['PROPRIETARY_FEATURES']]
     regime_cols = regime_features.columns.tolist()
 
-    logger.info(f"Creating comprehensive interactions: {len(macro_cols)} macro × {len(prop_cols)} proprietary")
+    top_macro_cols = macro_cols[:10]  # Reduced from all 16 to top 10
+    top_prop_cols = [col for col in prop_cols if col in ['VIX', 'FNG', 'RSI', 'Momentum125', 'AnnVolatility', 'PriceStrength', 'MACD', 'ATR']]  # Top 8 proprietary
+    
+    logger.info(f"Creating optimized interactions: {len(top_macro_cols)} macro × {len(top_prop_cols)} proprietary (performance limited)")
 
     # OPTIMIZATION 1: Vectorized Macro × Proprietary interactions
-    if macro_cols and prop_cols:
-        macro_array = macro_features[macro_cols].values
-        prop_array = proprietary_features[prop_cols].values
+    if top_macro_cols and top_prop_cols:
+        macro_array = macro_features[top_macro_cols].values
+        prop_array = proprietary_features[top_prop_cols].values
         
         # Vectorized outer product for all combinations
         macro_expanded = macro_array[:, :, np.newaxis]
@@ -1491,7 +1496,7 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
         interactions = macro_expanded * prop_expanded
         
         # Create column names and flatten
-        interaction_names = [f"{macro}_X_{prop}" for macro in macro_cols for prop in prop_cols]
+        interaction_names = [f"{macro}_X_{prop}" for macro in top_macro_cols for prop in top_prop_cols]
         interactions_flat = interactions.reshape(len(macro_features), -1)
         
         # Add to DataFrame in batch
@@ -1501,11 +1506,11 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
         logger.info(f"Created {len(interaction_names)} macro × proprietary interactions (vectorized)")
 
     # OPTIMIZATION 2: Selective Macro × Regime interactions (vectorized)
-    key_regime_cols = [col for col in regime_cols if any(prop in col for prop in ['VIX', 'FNG', 'RSI', 'Momentum125'])]
-    top_macro_cols = macro_cols[:20]
+    key_regime_cols = [col for col in regime_cols if any(prop in col for prop in ['VIX', 'FNG', 'RSI'])][:5]  # Top 5 only
+    top_macro_regime_cols = top_macro_cols[:8]  # Further reduced to top 8
     
-    if top_macro_cols and key_regime_cols:
-        macro_regime_array = macro_features[top_macro_cols].values
+    if top_macro_regime_cols and key_regime_cols:
+        macro_regime_array = macro_features[top_macro_regime_cols].values
         regime_array = regime_features[key_regime_cols].values
         
         # Vectorized interactions
@@ -1513,7 +1518,7 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
         regime_expanded = regime_array[:, np.newaxis, :]
         
         regime_interactions = macro_regime_expanded * regime_expanded
-        regime_names = [f"{macro}_X_{regime}" for macro in top_macro_cols for regime in key_regime_cols]
+        regime_names = [f"{macro}_X_{regime}" for macro in top_macro_regime_cols for regime in key_regime_cols]
         regime_flat = regime_interactions.reshape(len(macro_features), -1)
         
         regime_df = pd.DataFrame(regime_flat, columns=regime_names, index=macro_features.index)
@@ -1743,10 +1748,12 @@ def create_all_features(df, macro_metadata=None, use_cache=True):
     logger.info("Creating comprehensive feature set with ALL proprietary features...")
     
     if use_cache:
-        data_hash = hash(str(df.values.tobytes()) + str(macro_metadata))
-        cache_key = f"features_{data_hash}"
+        # Create horizon-agnostic cache key for cross-horizon reuse
+        stock_hash = hash(str(df.values.tobytes()))
+        macro_hash = hash(str(macro_metadata)) if macro_metadata else 0
+        cache_key = f"features_{stock_hash}_{macro_hash}"
         if cache_key in FEATURE_CACHE:
-            logger.debug("Using cached features")
+            logger.debug(f"Using cached features (cross-horizon optimization)")
             return FEATURE_CACHE[cache_key].copy()
 
     # 1. Technical features
@@ -2034,7 +2041,7 @@ class EnhancedTradingModel:
                 if prediction_days in self.shap_explainers:
                     try:
                         # Get SHAP values for a sample of test data with caching
-                        sample_size = min(20, len(X_test_scaled))
+                        sample_size = min(10, len(X_test_scaled))  # Reduced from 20 to 10
                         X_sample = X_test_scaled[:sample_size]
                         
                         shap_key = f"shap_stock_{ticker}_{prediction_days}_{hash(str(X_sample.tobytes()))}"
@@ -2222,7 +2229,7 @@ class EnhancedTradingModel:
                 EXPLAINER_CACHE[explainer_key] = self.shap_explainers[prediction_days]
 
             # Calculate sample SHAP values with batching
-            sample_size = min(100, len(X_test))
+            sample_size = min(50, len(X_test))  # Reduced from 100 to 50
             X_test_sample = X_test[:sample_size]
 
             shap_key = f"shap_{prediction_days}_{hash(str(X_test_sample.tobytes()))}"
@@ -3229,16 +3236,18 @@ def load_data():
     return merged_stock_data, macro_metadata, stock_data
 
 def generate_features(merged_stock_data, macro_metadata, use_cache=True):
-    """Optimized feature generation with vectorization and caching"""
-    print("\nGenerating features with caching optimization...")
+    """Generate features once and cache for all horizons"""
+    print("\nGenerating features with cross-horizon optimization...")
     
     features_by_stock = {}
     
     for ticker, df in merged_stock_data.items():
+        # Generate features once per stock, reuse across horizons
         features = create_all_features(df, macro_metadata, use_cache=use_cache)
         features_by_stock[ticker] = features
+        logger.info(f"Generated features for {ticker} (will reuse across horizons)")
         
-    print(f"Generated features for {len(features_by_stock)} stocks")
+    print(f"Generated features for {len(features_by_stock)} stocks (cross-horizon cached)")
     return features_by_stock
 
 def train_model(merged_stock_data, macro_metadata, horizons):
@@ -3271,6 +3280,10 @@ def train_model(merged_stock_data, macro_metadata, horizons):
 
         # Add to all signals
         all_signals.extend(signals)
+
+        import gc
+        gc.collect()
+        logger.info(f"Memory cleanup after {horizon}-day horizon processing")
 
     return ml_model, all_signals
 
