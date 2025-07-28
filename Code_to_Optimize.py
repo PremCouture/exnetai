@@ -1939,22 +1939,22 @@ class EnhancedTradingModel:
         for feat in feature_names:
             if '_X_' in feat:
                 categories['interaction'].append(feat)
+            elif any(transform in feat for transform in ['_log', '_square', '_sqrt', '_rank', '_pct', '_zscore']):
+                categories['transformed'].append(feat)
+            # Check for regime features
+            elif any(regime in feat for regime in ['_high', '_low', '_extreme', '_neutral']):
+                categories['regime'].append(feat)
             elif feat in truly_proprietary:
                 categories['proprietary'].append(feat)
             elif feat in technical_indicators:
                 categories['technical'].append(feat)
             elif any(f'{prop}_' in feat for prop in CONFIG['PROPRIETARY_FEATURES']):
-                if any(transform in feat for transform in ['_log', '_square', '_sqrt', '_rank', '_pct', '_zscore']):
-                    categories['transformed'].append(feat)
-                elif any(regime in feat for regime in ['_high', '_low', '_extreme', '_neutral']):
-                    categories['regime'].append(feat)
+                # Check if base feature is technical or proprietary
+                base_feat = feat.split('_')[0]
+                if base_feat in technical_indicators:
+                    categories['technical'].append(feat)
                 else:
-                    # Check if base feature is technical or proprietary
-                    base_feat = feat.split('_')[0]
-                    if base_feat in technical_indicators:
-                        categories['technical'].append(feat)
-                    else:
-                        categories['proprietary'].append(feat)
+                    categories['proprietary'].append(feat)
             elif 'fred_' in feat:
                 categories['macro'].append(feat)
             else:
@@ -1975,9 +1975,9 @@ class EnhancedTradingModel:
             'proprietary': 2,   # Keep top 2 proprietary features
             'macro': 1,         # 1 top macro economic indicator
             'technical': 1,     # 1 top technical indicator for balance
-            'transformed': 1,   # Keep minimal transformed
-            'interaction': 1,   # Keep minimal interaction
-            'regime': 1         # Keep minimal regime
+            'transformed': 0,   # Exclude transformed to avoid dominance
+            'interaction': 0,   # Exclude interaction for balanced selection
+            'regime': 0         # Exclude regime for balanced selection
         }
 
         # Get top features by category with balanced limits for speed
@@ -1997,30 +1997,81 @@ class EnhancedTradingModel:
         # Create balanced overall top 2: prioritize 1 macro + 1 technical/proprietary
         balanced_top_2 = []
         
+        logger.info(f"\n🔍 BALANCED SELECTION DEBUG:")
+        for cat, feats in top_features.items():
+            if feats:
+                logger.info(f"  {cat}: {len(feats)} features - {[f[0] for f in feats[:3]]}")
+            else:
+                logger.info(f"  {cat}: 0 features")
+        
         # First priority: get 1 macro feature if available
         if top_features.get('macro'):
-            balanced_top_2.append(top_features['macro'][0])
+            macro_feat = top_features['macro'][0]
+            balanced_top_2.append(macro_feat)
+            logger.info(f"  ✅ Added macro: {macro_feat[0]} (importance: {macro_feat[1]:.4f})")
+        else:
+            logger.warning(f"  ⚠️  No macro features available!")
         
         tech_or_prop = []
         if top_features.get('technical'):
             tech_or_prop.extend(top_features['technical'])
+            logger.info(f"  📊 Technical features available: {[f[0] for f in top_features['technical']]}")
         if top_features.get('proprietary'):
             tech_or_prop.extend(top_features['proprietary'])
+            logger.info(f"  🏢 Proprietary features available: {[f[0] for f in top_features['proprietary']]}")
         
         # Sort by importance and take the best technical/proprietary
         if tech_or_prop:
             tech_or_prop.sort(key=lambda x: x[1], reverse=True)
-            balanced_top_2.append(tech_or_prop[0])
+            tech_feat = tech_or_prop[0]
+            balanced_top_2.append(tech_feat)
+            logger.info(f"  ✅ Added technical/proprietary: {tech_feat[0]} (importance: {tech_feat[1]:.4f})")
+        else:
+            logger.warning(f"  ⚠️  No technical or proprietary features available!")
         
         if len(balanced_top_2) < 2:
+            logger.warning(f"  🚨 FALLBACK TRIGGERED: Only {len(balanced_top_2)} features, need 2")
             all_features = [(feat_name, shap_importance[i], i) for i, feat_name in enumerate(feature_names)]
             all_features.sort(key=lambda x: x[1], reverse=True)
             
+            # Try to maintain balance in fallback by avoiding duplicate categories
+            existing_categories = set()
+            for feat_name, importance, idx in balanced_top_2:
+                feat_categories = self.categorize_features([feat_name])
+                category = next(iter([k for k, v in feat_categories.items() if v]), 'unknown')
+                existing_categories.add(category)
+            
+            # Prioritize core feature types over transformed/interaction features
+            priority_categories = ['macro', 'technical', 'proprietary']
+            
+            # First pass: try to fill with priority categories
             for feat_name, importance, idx in all_features:
                 if (feat_name, importance, idx) not in balanced_top_2:
-                    balanced_top_2.append((feat_name, importance, idx))
-                    if len(balanced_top_2) >= 2:
-                        break
+                    feat_categories = self.categorize_features([feat_name])
+                    category = next(iter([k for k, v in feat_categories.items() if v]), 'unknown')
+                    
+                    if category in priority_categories and category not in existing_categories:
+                        balanced_top_2.append((feat_name, importance, idx))
+                        existing_categories.add(category)
+                        logger.info(f"  🔄 Priority fallback added: {feat_name} [{category.upper()}] (importance: {importance:.4f})")
+                        if len(balanced_top_2) >= 2:
+                            break
+            
+            if len(balanced_top_2) < 2:
+                for feat_name, importance, idx in all_features:
+                    if (feat_name, importance, idx) not in balanced_top_2:
+                        feat_categories = self.categorize_features([feat_name])
+                        category = next(iter([k for k, v in feat_categories.items() if v]), 'unknown')
+                        balanced_top_2.append((feat_name, importance, idx))
+                        logger.info(f"  🔄 Final fallback added: {feat_name} [{category.upper()}] (importance: {importance:.4f})")
+                        if len(balanced_top_2) >= 2:
+                            break
+        
+        logger.info(f"  🎯 FINAL BALANCED TOP 2:")
+        for i, (feat_name, importance, idx) in enumerate(balanced_top_2[:2], 1):
+            feat_categories = self.categorize_features([feat_name])
+            category = next(iter([k for k, v in feat_categories.items() if v]), 'unknown')
+            logger.info(f"    {i}. [{category.upper()}] {feat_name}: {importance:.4f}")
         
         top_features['overall_top_2'] = balanced_top_2[:2]  # Ensure exactly 2 features
 
