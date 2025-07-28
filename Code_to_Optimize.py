@@ -2020,12 +2020,38 @@ class EnhancedTradingModel:
             tech_or_prop.extend(top_features['proprietary'])
             logger.info(f"  🏢 Proprietary features available: {[f[0] for f in top_features['proprietary']]}")
         
-        # Sort by importance and take the best technical/proprietary
+        # Prioritize core indicators over derived ones within technical/proprietary
         if tech_or_prop:
-            tech_or_prop.sort(key=lambda x: x[1], reverse=True)
-            tech_feat = tech_or_prop[0]
+            core_indicators = ['VIX', 'FNG', 'RSI', 'MACD', 'AnnVolatility', 'Momentum125', 
+                             'PriceStrength', 'VolumeBreadth', 'StochRSI', 'OBV', 'CMF']
+            
+            # Separate core vs derived features
+            core_features = []
+            derived_features = []
+            
+            for feat_name, importance, idx in tech_or_prop:
+                if feat_name in core_indicators:
+                    core_features.append((feat_name, importance, idx))
+                else:
+                    derived_features.append((feat_name, importance, idx))
+            
+            logger.info(f"  🎯 Core indicators available: {[f[0] for f in core_features]}")
+            logger.info(f"  📈 Derived indicators available: {[f[0] for f in derived_features]}")
+            
+            # Prioritize core indicators first, then derived if no core available
+            if core_features:
+                core_features.sort(key=lambda x: x[1], reverse=True)
+                tech_feat = core_features[0]
+                logger.info(f"  ✅ Selected CORE indicator: {tech_feat[0]} (importance: {tech_feat[1]:.4f})")
+            elif derived_features:
+                derived_features.sort(key=lambda x: x[1], reverse=True)
+                tech_feat = derived_features[0]
+                logger.info(f"  ⚠️  Selected DERIVED indicator: {tech_feat[0]} (importance: {tech_feat[1]:.4f})")
+            else:
+                tech_feat = tech_or_prop[0]  # Fallback
+                logger.info(f"  🔄 Fallback selection: {tech_feat[0]} (importance: {tech_feat[1]:.4f})")
+            
             balanced_top_2.append(tech_feat)
-            logger.info(f"  ✅ Added technical/proprietary: {tech_feat[0]} (importance: {tech_feat[1]:.4f})")
         else:
             logger.warning(f"  ⚠️  No technical or proprietary features available!")
         
