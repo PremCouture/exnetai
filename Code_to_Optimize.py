@@ -1958,10 +1958,14 @@ class EnhancedTradingModel:
                               'OBV', 'CMF', 'ADX', 'Williams_R', 'CCI', 'MFI']
 
         for feat in feature_names:
-            if '_X_' in feat:
-                categories['interaction'].append(feat)
-            elif any(transform in feat for transform in ['_log', '_square', '_sqrt', '_rank', '_pct', '_zscore']) or feat.startswith('[X]'):
+            if (feat.startswith('[X]') or 
+                'fred_zscore' in feat or 'zscore' in feat or
+                '_log' in feat or '_square' in feat or '_sqrt' in feat or 
+                '_rank' in feat or '_pct' in feat or '_norm' in feat or
+                any(transform in feat for transform in ['_log', '_square', '_sqrt', '_rank', '_pct', '_zscore', '_norm'])):
                 categories['transformed'].append(feat)
+            elif '_X_' in feat:
+                categories['interaction'].append(feat)
             # Check for regime features
             elif any(regime in feat for regime in ['_high', '_low', '_extreme', '_neutral']):
                 categories['regime'].append(feat)
@@ -1976,7 +1980,7 @@ class EnhancedTradingModel:
                     categories['proprietary'].append(feat)
                 else:
                     categories['technical'].append(feat)
-            elif 'fred_' in feat:
+            elif 'fred_' in feat and not any(transform in feat for transform in ['_zscore', '_log', '_sqrt', '_square', '_norm']):
                 categories['macro'].append(feat)
             else:
                 categories['technical'].append(feat)
@@ -2061,7 +2065,9 @@ class EnhancedTradingModel:
         
         macro_candidates = []
         for i, feat_name in enumerate(feature_names):
-            if feat_name.startswith('fred_'):  # Direct macro feature identification
+            if (feat_name.startswith('fred_') and 
+                not any(transform in feat_name for transform in ['_zscore', '_log', '_sqrt', '_square', '_norm']) and
+                not feat_name.startswith('[X]') and 'fred_zscore' not in feat_name):
                 macro_candidates.append((feat_name, shap_importance[i], i))
         
         if macro_candidates:
@@ -3626,6 +3632,13 @@ def format_outputs(all_signals, ml_model):
     # Final summary
     print("\n" + "="*60)
     print("ANALYSIS COMPLETE")
+    total_signals = len(all_signals)
+    buy_signals = len([s for s in all_signals if s['Signal'] in ['BUY', 'STRONG BUY']])
+    sell_signals = len([s for s in all_signals if s['Signal'] in ['SELL', 'STRONG SELL']])
+    unique_stocks = len(set([s['Stock'] for s in all_signals]))
+    print(f"Total Signals: {total_signals} ({buy_signals} BUY, {sell_signals} SELL)")
+    print(f"From {unique_stocks} unique stocks")
+    print("RESULTS ARE FILTERED TO SHOW ONLY THOSE STOCKS THAT HAVE ACCURATE ENOUGH SIGNALS")
     print("="*60)
 
     # Print complete legend
@@ -3657,6 +3670,72 @@ def format_outputs(all_signals, ml_model):
     print("\n**Feature Type Codes:**")
     print("[M] = Macro  [P] = Proprietary  [T] = Technical")
     print("[I] = Interaction  [R] = Regime")
+
+    print("\n**FRED Operator Symbols:**")
+    print(">> Much greater than (≥85th percentile)")
+    print("> Greater than (≥70th percentile)")
+    print("≥ Greater than or equal to (above median)")
+    print("≤ Less than or equal to (below median)")
+    print("< Less than (≤30th percentile)")
+    print("<< Much less than (≤15th percentile)")
+
+    print("\n**FRED Indicators:**")
+    print("Risk: Recession Risk (0.00 = no risk, 1.00 = high risk)")
+    print("GDP: Gross Domestic Product (in billions)")
+    print("Jobs: Non-Farm Payrolls (thousands)")
+    print("Prod: Labor Productivity Index")
+    print("House: Housing Cost Index")
+    print("Inc: Median Household Income")
+    print("CPI: Consumer Price Index (inflation)")
+    print("PCE: Personal Consumption Expenditures")
+    print("AMER: AMERIBOR interest rate")
+    print("NBER: NBER Recession Indicator (0/1)")
+    print("10Y: 10-Year Treasury Yield (%)")
+    print("FF: Federal Funds Rate (%)")
+    print("Claims: Initial Jobless Claims (weekly)")
+    print("Retail: Retail Sales (millions)")
+    print("Stress: Financial Stress Index (-ve = low stress)")
+    print("Sent: Consumer Sentiment (50-120 scale)")
+
+    print("\n**FRED Indicator Color Codes (Triggers column):**")
+    print("🔵 Blue: Value is in the lowest 15% of recent range (very low)")
+    print("🟢 Green: Value is in the 15-30% range (low)")
+    print("🟡 Yellow: Value is in the 30-70% range (moderate/neutral)")
+    print("🟠 Orange: Value is in the 70-85% range (high)")
+    print("🔴 Red: Value is in the highest 15% of recent range (very high)")
+
+    print("\n**Special Cases for Color Interpretation:**")
+    print("Recession Risk: 🔵=No risk, 🟢=Low, 🟡=Moderate, 🟠=High, 🔴=Very High")
+    print("Productivity/Income/GDP: Colors inverted (🔵=High is good, 🔴=Low is bad)")
+    print("Most other indicators: 🔴=High values signal caution, 🔵=Low values are favorable")
+
+    print("\n**Technical Indicators:**")
+    print("RSI: 30=oversold (BUY), 70=overbought (SELL)")
+    print("VIX: >30=high fear (potential SELL), <15=low fear (when available)")
+    print("FNG: <0.3=extreme fear (contrarian BUY), >0.7=extreme greed (SELL) (when available)")
+    print("News: <-0.5=very negative, >0.5=very positive (-1 to +1 scale) (when available)")
+    print("Call/Put: >1.2=bullish sentiment, <0.8=bearish sentiment (when available)")
+    print("MACD: Bullish cross = BUY signal, Bearish cross = SELL signal")
+    print("Price/SMA: <0.95 = significantly below average (potential bounce or continued SELL)")
+
+    print("\n**Short Bias Factors:**")
+    print("Death Cross: 50-day MA < 200-day MA")
+    print("VIX>30: High market fear (when VIX is available)")
+    print("FNG<0.25: Extreme fear in market (when FNG is available)")
+    print("News<-0.5: Very negative news sentiment (when News is available)")
+    print("CallPut<0.7: Heavy put buying (when Call/Put is available)")
+    print("Financial Stress>2: Banking/credit stress")
+    print("Volume Spike + Selling: Distribution pattern")
+
+    print("\n**SHAP Column Color Codes:**")
+    print("🟢 Green: Feature contributes positively to the prediction")
+    print("🔴 Red: Feature contributes negatively to the prediction")
+    print("Note: SHAP values show feature importance and direction of influence")
+
+    print("\n**Guide Column Traffic Lights:**")
+    print("🟢 Strong Buy/Sell: All indicators align with the signal")
+    print("🟡 Buy/Sell Caution: Mixed signals, proceed with caution")
+    print("🔴 High Risk/Cover Short: Conflicting indicators, reconsider position")
 
     print("\n**Trade Playbook Columns:**")
     print("STOCK - Ticker symbol")
