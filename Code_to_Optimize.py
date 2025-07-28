@@ -1988,7 +1988,7 @@ class EnhancedTradingModel:
         # Calculate absolute SHAP importance
         shap_importance = np.abs(shap_values).mean(axis=0) if len(shap_values.shape) > 1 else np.abs(shap_values)
 
-        importance_threshold = 0.15
+        importance_threshold = 0.01
         
         significant_features = []
         significant_importance = []
@@ -1996,6 +1996,8 @@ class EnhancedTradingModel:
             if importance >= importance_threshold:
                 significant_features.append(feat_name)
                 significant_importance.append(importance)
+        
+        logger.info(f"🔍 IMPORTANCE FILTERING: {len(significant_features)}/{len(feature_names)} features above {importance_threshold:.3f} threshold")
         
         if len(significant_features) == 0:
             logger.warning(f"⚠️  NO SIGNIFICANT FEATURES above threshold {importance_threshold:.3f} - signal will be skipped")
@@ -2100,7 +2102,7 @@ class EnhancedTradingModel:
             logger.info(f"  🎯 Core indicators available: {[f[0] for f in core_features]}")
             logger.info(f"  📈 Derived indicators available: {[f[0] for f in derived_features]}")
             
-            importance_threshold = 0.15
+            importance_threshold = 0.01
             
             # Prioritize core indicators first, then derived if no core available
             if core_features:
@@ -2136,7 +2138,7 @@ class EnhancedTradingModel:
             
             used_features = {f[0] for f in balanced_top_2}
             for i, feat_name in enumerate(significant_features):
-                if feat_name not in used_features and significant_importance[i] >= 0.15:
+                if feat_name not in used_features and significant_importance[i] >= importance_threshold:
                     balanced_top_2.append((feat_name, significant_importance[i], i))
                     logger.info(f"  🔄 FALLBACK added: {feat_name} (importance: {significant_importance[i]:.4f})")
                     break
@@ -2152,7 +2154,7 @@ class EnhancedTradingModel:
         
         if len(balanced_top_2) > 0:
             min_importance = min(f[1] for f in balanced_top_2)
-            logger.info(f"  📈 Minimum feature importance: {min_importance:.4f} (threshold: 0.15)")
+            logger.info(f"  📈 Minimum feature importance: {min_importance:.4f} (threshold: {importance_threshold:.3f})")
         
         return top_features
 
