@@ -1526,13 +1526,11 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
         
         logger.info(f"Created {len(regime_names)} macro × regime interactions (vectorized)")
 
-    # OPTIMIZATION 3: Pre-computed triple interactions (cached approach) - REDUCED TO TOP 5
+    # OPTIMIZATION 3: Pre-computed triple interactions (cached approach) - ULTRA-AGGRESSIVE: TOP 3 ONLY
     important_interactions = [
         ('CPIAUCSL', 'VIX', 'VIX_high'),
         ('DGS10', 'AnnVolatility', 'VIX_extreme_high'),
-        ('UNRATE', 'FNG', 'FNG_low'),
-        ('GDP', 'Momentum125', 'Momentum125_high'),
-        ('FEDFUNDS', 'PriceStrength', 'RSI_extreme_high')
+        ('UNRATE', 'FNG', 'FNG_low')
     ]
 
     # Batch process triple interactions
