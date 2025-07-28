@@ -1866,37 +1866,56 @@ class EnhancedTradingModel:
         self.feature_presence_matrix = {}  # Track which features appear in top 5
 
     def prepare_training_data(self, df, features, prediction_days):
-        """Prepare training data with proper future alignment"""
-        # Calculate future returns
-        future_price = df['Close'].shift(-prediction_days)
-        current_price = df['Close']
+        """Prepare training data with proper temporal alignment to prevent data leakage"""
+        features_historical = features.iloc[:-prediction_days].copy()
+        
+        # Calculate future returns using only the remaining historical data
+        df_historical = df.iloc[:-prediction_days].copy()
+        future_price = df.iloc[prediction_days:]['Close'].values
+        current_price = df_historical['Close'].values
+        
+        # Ensure arrays are same length
+        min_len = min(len(future_price), len(current_price))
+        future_price = future_price[:min_len]
+        current_price = current_price[:min_len]
+        
         future_returns = (future_price - current_price) / current_price
-
-        # Binary target: 1 for up, 0 for down
         target = (future_returns > 0).astype(int)
-
-        # Store actual returns for performance calculation
-        actual_returns = future_returns
-
-        # Remove last rows without future data
-        features = features.iloc[:-prediction_days]
-        target = target.iloc[:-prediction_days]
-        actual_returns = actual_returns.iloc[:-prediction_days]
-
+        
+        # Align features with target
+        features_aligned = features_historical.iloc[:min_len].copy()
+        
         # Remove any NaN
-        valid_idx = ~(features.isna().any(axis=1) | target.isna())
-
-        X = features[valid_idx].copy()
-        y = target[valid_idx].copy()
-        returns = actual_returns[valid_idx].copy()
-
+        valid_idx = ~(features_aligned.isna().any(axis=1) | pd.isna(target))
+        
+        X = features_aligned[valid_idx].copy()
+        y = pd.Series(target)[valid_idx].copy()
+        returns = pd.Series(future_returns)[valid_idx].copy()
+        
         # Check class balance
         if len(y) > 0:
             up_count = (y == 1).sum()
             down_count = (y == 0).sum()
             logger.info(f"Target balance for {prediction_days}d: UP={up_count} ({up_count/len(y)*100:.1f}%), DOWN={down_count} ({down_count/len(y)*100:.1f}%)")
 
+        self.validate_no_data_leakage(X, y, prediction_days)
+
         return X, y, returns
+
+    def validate_no_data_leakage(self, features, target, prediction_days):
+        """Validate that features don't contain future information"""
+        if hasattr(features, 'index') and hasattr(target, 'index'):
+            feature_max_date = features.index.max() if len(features) > 0 else None
+            target_min_date = target.index.min() if len(target) > 0 else None
+            
+            if feature_max_date and target_min_date:
+                if feature_max_date >= target_min_date:
+                    logger.warning(f"Potential data leakage detected: feature max date {feature_max_date} >= target min date {target_min_date}")
+                    
+        if hasattr(self, 'performance_metrics'):
+            for horizon, metrics in self.performance_metrics.items():
+                if 'test' in metrics and metrics['test'].get('accuracy', 0) > 95:
+                    logger.warning(f"Suspiciously high accuracy {metrics['test']['accuracy']:.1f}% for {horizon}d horizon - check for data leakage")
 
     def categorize_features(self, feature_names):
         """Categorize features by type"""
@@ -2874,6 +2893,8 @@ def get_performance_indicator(value: float, metric_type: str) -> str:
         return "🔴" if value > 40 else "🟡" if value > 30 else "🟢"
     elif metric_type == "momentum":
         return "🟢" if value > 20 else "🟡" if value > 10 else "🔴" if value < -10 else "⚪"
+    elif metric_type == "drawdown":
+        return "🟢" if value > -5 else "🟡" if value > -10 else "🔴" if value < -20 else "⚪"
     return ""
 
 def create_complete_playbook_tables(df, horizon):
@@ -2901,6 +2922,7 @@ def create_complete_playbook_tables(df, horizon):
             "Accuracy": f"{get_performance_indicator(row['Accuracy'], 'accuracy')}{row['Accuracy']:.1f}%",
             "Sharpe": f"{get_performance_indicator(row['Sharpe'], 'sharpe')}{row['Sharpe']:.2f}",
             "CAGR": f"{get_performance_indicator(row['CAGR'], 'cagr')}{display_value(row['CAGR'])}%",
+            "Drawdown": f"{get_performance_indicator(row.get('Drawdown', 0), 'drawdown')}{display_value(row.get('Drawdown', 0))}%",
             "VIX": f"{get_performance_indicator(row['VIX'], 'vix')}{prop_values['VIX']}",
             "FNG": f"{get_performance_indicator(row['FNG'], 'fng')}{prop_values['FNG']}",
             "RSI": prop_values['RSI'],
