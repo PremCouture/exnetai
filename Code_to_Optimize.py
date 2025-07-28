@@ -3052,8 +3052,14 @@ def create_complete_playbook_tables(df, horizon):
     complete_rows = []
     for idx in df.index:
         row = df.loc[idx]
-        # Get all proprietary values efficiently in batch
-        prop_values = {feat: display_value(row.get(feat, np.nan)) for feat in CONFIG['PROPRIETARY_FEATURES']}
+        # Get all proprietary values efficiently in batch with error handling
+        prop_values = {}
+        for feat in CONFIG['PROPRIETARY_FEATURES']:
+            if feat in row:
+                prop_values[feat] = display_value(row[feat])
+            else:
+                prop_values[feat] = "N/A"
+                logger.warning(f"Missing proprietary feature '{feat}' in row data, using default 'N/A'")
 
         complete_rows.append({
             "Ticker": row['Stock'],
