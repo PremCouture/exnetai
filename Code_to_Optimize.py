@@ -1960,7 +1960,7 @@ class EnhancedTradingModel:
         for feat in feature_names:
             if '_X_' in feat:
                 categories['interaction'].append(feat)
-            elif any(transform in feat for transform in ['_log', '_square', '_sqrt', '_rank', '_pct', '_zscore']):
+            elif any(transform in feat for transform in ['_log', '_square', '_sqrt', '_rank', '_pct', '_zscore']) or feat.startswith('[X]'):
                 categories['transformed'].append(feat)
             # Check for regime features
             elif any(regime in feat for regime in ['_high', '_low', '_extreme', '_neutral']):
@@ -2058,12 +2058,6 @@ class EnhancedTradingModel:
         # Create balanced overall top 2: prioritize 1 macro + 1 proprietary (ALWAYS)
         balanced_top_2 = []
         
-        logger.info(f"\n🔍 BALANCED SELECTION DEBUG:")
-        for cat, feats in top_features.items():
-            if feats:
-                logger.info(f"  {cat}: {len(feats)} features - {[f[0] for f in feats[:3]]}")
-            else:
-                logger.info(f"  {cat}: 0 features")
         
         macro_candidates = []
         for i, feat_name in enumerate(feature_names):
@@ -3092,66 +3086,86 @@ def get_performance_indicator(value: float, metric_type: str) -> str:
         return "🟢" if value > -5 else "🟡" if value > -10 else "🔴" if value < -20 else "⚪"
     return ""
 
-def create_complete_playbook_tables(df, horizon):
-    """Create complete tables showing ALL data including missing values"""
+def create_trade_playbook_table(df, horizon):
+    """Create combined TRADE PLAYBOOK table for production use"""
     if len(df) == 0:
         return
 
     # Sort by accuracy
     df = df.sort_values('Accuracy', ascending=False)
-
-    print(f"\n{'='*150}")
-    print(f"<span style='font-size:24px;font-weight:bold'>📊 {horizon}-DAY COMPLETE ANALYSIS</span>")
-    print(f"{'='*150}")
-
-    # Prepare COMPLETE data table with ALL proprietary features - vectorized approach
-    complete_rows = []
+    
+    buy_signals = len(df[df['Signal'].isin(['BUY', 'STRONG BUY'])])
+    sell_signals = len(df[df['Signal'].isin(['SELL', 'STRONG SELL'])])
+    total_signals = len(df)
+    
+    print(f"\n**TRADE PLAYBOOK --- {horizon} DAYS**")
+    print(f"*Showing {total_signals} signals ({buy_signals} BUY, {sell_signals} SELL)*")
+    print("```markdown")
+    
+    # Create combined table rows
+    playbook_rows = []
     for idx in df.index:
         row = df.loc[idx]
-        # Get all proprietary values efficiently in batch with error handling
-        prop_values = {}
-        for feat in CONFIG['PROPRIETARY_FEATURES']:
-            if feat in row:
-                prop_values[feat] = display_value(row[feat])
+        
+        # Extract direction from signal
+        direction = "📈" if row['Signal'] in ['BUY', 'STRONG BUY'] else "📉"
+        
+        # Create TRIGGERS from key indicators
+        triggers = []
+        vix_val = row.get('VIX', 0)
+        fng_val = row.get('FNG', 50)
+        rsi_val = row.get('RSI', 50)
+        
+        if vix_val > 30:
+            triggers.append(f"VIX>{vix_val:.0f}")
+        if fng_val < 25:
+            triggers.append(f"Fear({fng_val:.0f})")
+        elif fng_val > 75:
+            triggers.append(f"Greed({fng_val:.0f})")
+        if rsi_val < 30:
+            triggers.append("RSI<30")
+        elif rsi_val > 70:
+            triggers.append("RSI>70")
+        
+        triggers_str = " | ".join(triggers) if triggers else "Standard"
+        
+        # Create GUIDE from IF/THEN logic
+        if_then = row.get('IF_THEN', '')
+        if if_then and len(if_then) > 50:
+            if "high confidence" in if_then.lower():
+                guide = "High confidence signal ✅✅"
+            elif "moderate confidence" in if_then.lower():
+                guide = "Moderate confidence ✅"
             else:
-                prop_values[feat] = "N/A"
-                logger.warning(f"Missing proprietary feature '{feat}' in row data, using default 'N/A'")
-
-        complete_rows.append({
-            "Ticker": row['Stock'],
-            "Signal": row['Signal'],
-            "Accuracy": f"{get_performance_indicator(row['Accuracy'], 'accuracy')}{row['Accuracy']:.1f}%",
-            "Sharpe": f"{get_performance_indicator(row['Sharpe'], 'sharpe')}{row['Sharpe']:.2f}",
-            "CAGR": f"{get_performance_indicator(row['CAGR'], 'cagr')}{display_value(row['CAGR'])}%",
-            "Drawdown": f"{get_performance_indicator(row.get('Drawdown', 0), 'drawdown')}{display_value(row.get('Drawdown', 0))}%",
-            "VIX": f"{get_performance_indicator(row['VIX'], 'vix')}{prop_values['VIX']}",
-            "FNG": f"{get_performance_indicator(row['FNG'], 'fng')}{prop_values['FNG']}",
-            "RSI": prop_values['RSI'],
-            "AnnVol": f"{get_performance_indicator(row['AnnVolatility'], 'volatility')}{prop_values['AnnVolatility']}%",
-            "Mom125": f"{get_performance_indicator(row['Momentum125'], 'momentum')}{prop_values['Momentum125']}%",
-            "PriceStr": prop_values['PriceStrength'],
-            "VolBreadth": prop_values['VolumeBreadth'],
-            "MACD": prop_values.get('MACD', 'N/A'),
-            "ATR": prop_values.get('ATR', 'N/A'),
-            "ADX": prop_values.get('ADX', 'N/A'),
-            "StochRSI": prop_values.get('StochRSI', 'N/A'),
-            "CCI": prop_values.get('CCI', 'N/A'),
-            "MFI": prop_values.get('MFI', 'N/A'),
-            "News": prop_values['NewsScore'],
-            "CallPut": prop_values['CallPut']
+                guide = "Standard signal"
+        else:
+            guide = "Standard signal"
+        
+        # Format accuracy and performance metrics with indicators
+        accuracy_str = f"{get_performance_indicator(row['Accuracy'], 'accuracy')}{row['Accuracy']:.1f}%"
+        sharpe_str = f"{get_performance_indicator(row['Sharpe'], 'sharpe')}{row['Sharpe']:.2f}"
+        drawdown_str = f"{get_performance_indicator(row.get('Drawdown', 0), 'drawdown')}{row.get('Drawdown', 0):.1f}%"
+        
+        playbook_rows.append({
+            "STOCK": row['Stock'],
+            "SIGNAL": row['Signal'],
+            "DIR.": direction,
+            "ACC.": accuracy_str,
+            "SHARPE": sharpe_str,
+            "DRAW": drawdown_str,
+            "TRIGGERS": triggers_str,
+            "SHAP (TOP 2)": row.get('SHAP', 'N/A'),
+            "GUIDE": guide
         })
-
-    complete_df = pd.DataFrame(complete_rows)
-
-    # Print COMPLETE proprietary features table with improved formatting
-    print(f"\n📈 **{horizon}-DAY COMPLETE PROPRIETARY FEATURES TABLE**")
-    print("```")
-    headers = complete_df.columns.tolist()
     
-    # Calculate column widths for proper alignment
+    # Print table with proper formatting
+    playbook_df = pd.DataFrame(playbook_rows)
+    headers = playbook_df.columns.tolist()
+    
+    # Calculate column widths
     col_widths = {}
     for col in headers:
-        col_widths[col] = max(len(str(col)), max(len(str(val)) for val in complete_df[col]))
+        col_widths[col] = max(len(str(col)), max(len(str(val)) for val in playbook_df[col]))
     
     header_row = " | ".join([str(h).ljust(col_widths[h]) for h in headers])
     print(header_row)
@@ -3159,51 +3173,11 @@ def create_complete_playbook_tables(df, horizon):
     separator_row = " | ".join(["-" * col_widths[h] for h in headers])
     print(separator_row)
     
-    for _, row in complete_df.iterrows():
+    for _, row in playbook_df.iterrows():
         data_row = " | ".join([str(row[col]).ljust(col_widths[col]) for col in headers])
         print(data_row)
+    
     print("```")
-
-    # Prepare SHAP analysis table - vectorized approach
-    shap_rows = []
-    for idx in df.index:
-        row = df.loc[idx]
-        # Parse feature presence efficiently
-        feature_presence = row.get('feature_presence', {})
-        presence_str = ", ".join([f"{k}:{v}" for k, v in feature_presence.items() if v > 0])
-
-        shap_rows.append({
-            "Ticker": row['Stock'],
-            "Top 2 SHAP Features": row.get('SHAP', 'N/A'),
-            "Feature Types Present": presence_str or "None",
-            "Driver": row.get('driver_type', 'Unknown')
-        })
-
-    shap_df = pd.DataFrame(shap_rows)
-
-    # Print SHAP analysis table with improved formatting
-    print(f"\n🔍 **{horizon}-DAY SHAP FEATURE ANALYSIS**")
-    print("```")
-    headers = shap_df.columns.tolist()
-    
-    # Calculate column widths for proper alignment
-    col_widths = {}
-    for col in headers:
-        col_widths[col] = max(len(str(col)), max(len(str(val)) for val in shap_df[col]))
-    
-    header_row = " | ".join([str(h).ljust(col_widths[h]) for h in headers])
-    print(header_row)
-    
-    separator_row = " | ".join(["-" * col_widths[h] for h in headers])
-    print(separator_row)
-    
-    for _, row in shap_df.iterrows():
-        data_row = " | ".join([str(row[col]).ljust(col_widths[col]) for col in headers])
-        print(data_row)
-    print("```")
-
-    # Summary statistics
-    print(f"\n📊 **{horizon}-DAY SUMMARY STATISTICS**")
 
     # Calculate statistics for ALL proprietary features
     prop_stats = {}
@@ -3592,7 +3566,7 @@ def format_outputs(all_signals, ml_model):
         horizon_signals = [s for s in all_signals if s['horizon'] == f'{horizon}d']
         if horizon_signals:
             df_horizon = pd.DataFrame(horizon_signals)
-            create_complete_playbook_tables(df_horizon, horizon)
+            create_trade_playbook_table(df_horizon, horizon)
 
     # Executive Summary
     print("\n" + "="*150)
@@ -3682,7 +3656,18 @@ def format_outputs(all_signals, ml_model):
 
     print("\n**Feature Type Codes:**")
     print("[M] = Macro  [P] = Proprietary  [T] = Technical")
-    print("[I] = Interaction  [R] = Regime  [X] = Transformed")
+    print("[I] = Interaction  [R] = Regime")
+
+    print("\n**Trade Playbook Columns:**")
+    print("STOCK - Ticker symbol")
+    print("SIGNAL - Trading recommendation (BUY/SELL)")
+    print("DIR. - Direction indicator (📈/📉)")
+    print("ACC. - Prediction accuracy percentage")
+    print("SHARPE - Risk-adjusted return ratio")
+    print("DRAW - Maximum drawdown percentage")
+    print("TRIGGERS - Key market conditions driving signal")
+    print("SHAP (TOP 2) - Most important features (1 macro + 1 proprietary)")
+    print("GUIDE - Confidence level and signal quality")
 
     print("\n**Missing Data:**")
     print("— = Data not available or could not be calculated")
