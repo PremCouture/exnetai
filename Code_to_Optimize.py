@@ -83,7 +83,7 @@ CONFIG = {
     'MIN_SAMPLES_LEAF': 25,  # Further increased from 20 for speed
 
     # Display parameters
-    'MAX_SHAP_FEATURES': 5,  # Show top 5 features
+    'MAX_SHAP_FEATURES': 2,  # Show top 2 features
     'CONFIDENCE_THRESHOLD': 45,
 
     # ALL Proprietary/Technical features to ALWAYS include
@@ -1863,7 +1863,7 @@ class EnhancedTradingModel:
         self.signal_statistics = defaultdict(lambda: defaultdict(int))
         self.per_stock_metrics = {}
         self.feature_importance_matrix = {}
-        self.feature_presence_matrix = {}  # Track which features appear in top 5
+        self.feature_presence_matrix = {}  # Track which features appear in top 2
 
     def prepare_training_data(self, df, features, prediction_days):
         """Prepare training data with proper temporal alignment to prevent data leakage"""
@@ -1948,40 +1948,41 @@ class EnhancedTradingModel:
         return categories
 
     def get_top_features_by_type(self, feature_names, shap_values, n_per_type=5):
-        """Get top N features from each category with aggressive filtering for sub-2-minute target"""
+        """Get top features with balanced 1 macro + 1 technical selection for diversity"""
         # Calculate absolute SHAP importance
         shap_importance = np.abs(shap_values).mean(axis=0) if len(shap_values.shape) > 1 else np.abs(shap_values)
 
         # Categorize features
         categories = self.categorize_features(feature_names)
 
-        # Get top features by category with aggressive limits for speed
-        top_features = {}
-        
+        # Balanced feature limits: 1 macro + 1 technical for diversity
         feature_limits = {
-            'proprietary': 2,   # EXTREME: Only top 2 proprietary for sub-2-minute target
-            'macro': 1,         # EXTREME: Only 1 macro feature
-            'technical': 1,     # EXTREME: Only 1 technical feature
-            'transformed': 1,   # EXTREME: Only 1 transformed feature
-            'interaction': 1,   # EXTREME: Only 1 interaction feature
-            'regime': 1         # EXTREME: Only 1 regime feature for maximum speed
+            'proprietary': 2,   # Keep top 2 proprietary features
+            'macro': 1,         # 1 top macro economic indicator
+            'technical': 1,     # 1 top technical indicator for balance
+            'transformed': 1,   # Keep minimal transformed
+            'interaction': 1,   # Keep minimal interaction
+            'regime': 1         # Keep minimal regime
         }
 
+        # Get top features by category with balanced limits for speed
+        top_features = {}
+        
         for category, feat_list in categories.items():
             category_features = []
             for i, feat_name in enumerate(feature_names):
                 if feat_name in feat_list:
                     category_features.append((feat_name, shap_importance[i], i))
 
-            # Sort by importance and apply aggressive limits
+            # Sort by importance and apply balanced limits
             category_features.sort(key=lambda x: x[1], reverse=True)
             limit = feature_limits.get(category, 2)  # Default to 2 if category not specified
             top_features[category] = category_features[:limit]
 
-        # EXTREME: Reduce overall top features to only 2 for sub-2-minute target
+        # Update overall top features to match actual count (2 features)
         all_features = [(feat_name, shap_importance[i], i) for i, feat_name in enumerate(feature_names)]
         all_features.sort(key=lambda x: x[1], reverse=True)
-        top_features['overall_top_5'] = all_features[:2]  # EXTREME: Only top 2 features
+        top_features['overall_top_2'] = all_features[:2]  # Match actual feature count
 
         return top_features
 
@@ -2092,8 +2093,8 @@ class EnhancedTradingModel:
                         )
                         per_stock_feature_importance[ticker] = feature_importance
 
-                        # Track feature presence in top 5
-                        for feat_name, _, _ in feature_importance['overall_top_5']:
+                        # Track feature presence in top 2
+                        for feat_name, _, _ in feature_importance['overall_top_2']:
                             categories = self.categorize_features([feat_name])
                             for cat, feats in categories.items():
                                 if feats:
@@ -2303,18 +2304,18 @@ class EnhancedTradingModel:
                 else:
                     logger.warning(f"  ⚠️  NO {category} features found!")
 
-            # Check overall top 5
-            logger.info(f"\nOVERALL TOP 5 FEATURES:")
+            # Check overall top 2
+            logger.info(f"\nOVERALL TOP 2 FEATURES:")
             overall_categories = defaultdict(int)
-            for feat_name, importance, idx in feature_importance_by_type['overall_top_5']:
+            for feat_name, importance, idx in feature_importance_by_type['overall_top_2']:
                 cats = self.categorize_features([feat_name])
                 cat_name = next(iter([k for k, v in cats.items() if v]), 'unknown')
                 overall_categories[cat_name] += 1
                 logger.info(f"  [{cat_name.upper()}] {feat_name}: {importance:.4f}")
 
-            # Warning if proprietary features are missing from top 5
+            # Warning if proprietary features are missing from top 2
             if overall_categories['proprietary'] == 0:
-                logger.warning("\n⚠️  WARNING: No proprietary features in overall top 5!")
+                logger.warning("\n⚠️  WARNING: No proprietary features in overall top 2!")
 
             # Calculate overall feature importance
             shap_importance = np.abs(shap_values).mean(axis=0)
@@ -2470,7 +2471,7 @@ class EnhancedTradingModel:
             return None
 
     def create_feature_presence_heatmap(self, output_path=None):
-        """Create heatmap showing feature type presence in top 5 for each stock"""
+        """Create heatmap showing feature type presence in top 2 for each stock"""
         if not self.feature_presence_matrix:
             logger.warning("No feature presence data available for heatmap")
             return
@@ -2512,12 +2513,12 @@ class EnhancedTradingModel:
                 norm=norm,
                 annot=True,
                 fmt='g',
-                cbar_kws={'label': 'Features in Top 5', 'ticks': [0, 1, 2, 3, 4]},
+                cbar_kws={'label': 'Features in Top 2', 'ticks': [0, 1, 2]},
                 linewidths=0.5,
                 linecolor='gray'
             )
 
-            plt.title(f'Feature Type Presence in Top 5 - {horizon}d Horizon\n(Red = 0 features, Green = multiple features)')
+            plt.title(f'Feature Type Presence in Top 2 - {horizon}d Horizon\n(Red = 0 features, Green = multiple features)')
             plt.xlabel('Feature Type')
             plt.ylabel('Stock')
             plt.xticks(rotation=45)
@@ -2542,7 +2543,7 @@ class EnhancedTradingModel:
             # Identify stocks missing proprietary features
             stocks_missing_prop = presence_matrix[presence_matrix['proprietary'] == 0].index.tolist()
             if stocks_missing_prop:
-                logger.warning(f"\nStocks with NO proprietary features in top 5: {stocks_missing_prop}")
+                logger.warning(f"\nStocks with NO proprietary features in top 2: {stocks_missing_prop}")
 
 # ==========================
 # SIGNAL GENERATION
@@ -2650,13 +2651,13 @@ def generate_signals_with_shap(stock_data, ml_model, macro_metadata, timeframe=3
                 try:
                     top_features_by_type = shap_explanation.get('top_features_by_type', {})
 
-                    # Get top 5 overall features
-                    overall_top_5 = top_features_by_type.get('overall_top_5', [])
+                    # Get top 2 overall features
+                    overall_top_2 = top_features_by_type.get('overall_top_2', [])
 
                     # Format features for display
                     formatted_features = []
 
-                    for feat_name, importance, idx in overall_top_5:
+                    for feat_name, importance, idx in overall_top_2:
                         # Determine category
                         categories = ml_model.categorize_features([feat_name])
                         category = next(iter([k for k, v in categories.items() if v]), 'unknown')
@@ -2855,7 +2856,7 @@ def generate_signals_with_shap(stock_data, ml_model, macro_metadata, timeframe=3
                     if count > 0:
                         feature_presence_summary[feat_type] += 1
 
-        logger.info(f"\nFeature Types in Top 5 (across all stocks):")
+        logger.info(f"\nFeature Types in Top 2 (across all stocks):")
         for feat_type, count in sorted(feature_presence_summary.items(), key=lambda x: x[1], reverse=True):
             logger.info(f"  {feat_type}: {count}/{len(signals)} stocks ({count/len(signals)*100:.1f}%)")
 
