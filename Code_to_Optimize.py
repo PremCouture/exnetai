@@ -1983,12 +1983,31 @@ class EnhancedTradingModel:
 
         return categories
 
+    def calculate_adaptive_threshold(self, shap_importance, min_threshold=0.001, max_threshold=0.05):
+        """Calculate adaptive SHAP importance threshold based on feature distribution"""
+        if len(shap_importance) == 0:
+            return min_threshold
+        
+        percentile_75 = np.percentile(shap_importance, 75)
+        percentile_50 = np.percentile(shap_importance, 50)
+        
+        adaptive_threshold = max(min_threshold, min(max_threshold, percentile_75 * 0.5))
+        
+        # Ensure we don't filter out too many features (keep at least top 20%)
+        if np.sum(shap_importance >= adaptive_threshold) < len(shap_importance) * 0.2:
+            adaptive_threshold = np.percentile(shap_importance, 80)
+        
+        logger.info(f"📊 ADAPTIVE THRESHOLD: {adaptive_threshold:.6f} (75th percentile: {percentile_75:.6f}, median: {percentile_50:.6f})")
+        logger.info(f"📈 Features above adaptive threshold: {np.sum(shap_importance >= adaptive_threshold)}/{len(shap_importance)}")
+        
+        return adaptive_threshold
+
     def get_top_features_by_type(self, feature_names, shap_values, n_per_type=5):
         """Get top features with balanced 1 macro + 1 technical selection for diversity and importance filtering"""
         # Calculate absolute SHAP importance
         shap_importance = np.abs(shap_values).mean(axis=0) if len(shap_values.shape) > 1 else np.abs(shap_values)
 
-        importance_threshold = 0.01
+        importance_threshold = self.calculate_adaptive_threshold(shap_importance)
         
         significant_features = []
         significant_importance = []
@@ -1997,13 +2016,17 @@ class EnhancedTradingModel:
                 significant_features.append(feat_name)
                 significant_importance.append(importance)
         
-        logger.info(f"🔍 IMPORTANCE FILTERING: {len(significant_features)}/{len(feature_names)} features above {importance_threshold:.3f} threshold")
+        logger.info(f"🔍 IMPORTANCE FILTERING: {len(significant_features)}/{len(feature_names)} features above adaptive threshold {importance_threshold:.6f}")
+        if len(significant_features) > 0:
+            max_importance = max(significant_importance)
+            min_importance = min(significant_importance)
+            logger.info(f"📊 Significant feature range: {min_importance:.6f} - {max_importance:.6f}")
         
         if len(significant_features) == 0:
-            logger.warning(f"⚠️  NO SIGNIFICANT FEATURES above threshold {importance_threshold:.3f} - signal will be skipped")
+            max_all = max(shap_importance) if len(shap_importance) > 0 else 0
+            logger.warning(f"⚠️  NO SIGNIFICANT FEATURES above adaptive threshold {importance_threshold:.6f} - signal will be skipped")
+            logger.warning(f"📊 Highest importance was {max_all:.6f} (adaptive threshold: {importance_threshold:.6f})")
             return {'overall_top_2': [], 'skip_signal': True}
-        
-        logger.info(f"🔍 IMPORTANCE FILTERING: {len(significant_features)}/{len(feature_names)} features above {importance_threshold:.3f} threshold")
 
         # Categorize significant features only
         categories = self.categorize_features(significant_features)
@@ -2102,7 +2125,7 @@ class EnhancedTradingModel:
             logger.info(f"  🎯 Core indicators available: {[f[0] for f in core_features]}")
             logger.info(f"  📈 Derived indicators available: {[f[0] for f in derived_features]}")
             
-            importance_threshold = 0.01
+            # importance_threshold already set above
             
             # Prioritize core indicators first, then derived if no core available
             if core_features:
