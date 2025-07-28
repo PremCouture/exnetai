@@ -67,7 +67,7 @@ CONFIG = {
     'HORIZONS': [30, 45, 60],  # Prediction horizons in days
     'MIN_SAMPLES_PER_TICKER': 200,  # Minimum samples required
     'MIN_SAMPLES_FOR_TRAINING': 100,  # Minimum samples for model training
-    'MAX_STOCKS': 5,  # LIMIT TO 5 STOCKS FOR COLAB
+    'MAX_STOCKS': 10,  # EXPANDED TO 10 STOCKS FOR COMPREHENSIVE ANALYSIS
 
     # Feature configuration
     'EXCLUDE_FROM_SHAP': ['USREC', 'recession', 'binary_feature'],  # Features to exclude from SHAP
@@ -3621,6 +3621,27 @@ def format_outputs(all_signals, ml_model):
                       f"{display_value(signal['Momentum125']):>7} "
                       f"{display_value(signal['AnnVolatility']):>8} {signal_type:<15}")
 
+        if sell_signals:
+            print("\n📉 **TOP SELL OPPORTUNITIES (sorted by VIX/Risk combo):**")
+
+            sell_df = pd.DataFrame(sell_signals)
+            sell_df['risk_score'] = sell_df['VIX'] + (100 - sell_df['FNG']) + sell_df['RSI']
+            top_sells = sell_df.nlargest(min(10, len(sell_df)), 'risk_score')
+
+            print("\n{:<8} {:<8} {:<6} {:<7} {:<4} {:<4} {:<4} {:<7} {:<8} {:<15}".format(
+                "Stock", "Horizon", "Acc%", "Sharpe", "VIX", "FNG", "RSI", "Mom125%", "AnnVol%", "Signal"
+            ))
+            print("-" * 100)
+
+            for idx in top_sells.index:
+                signal = top_sells.loc[idx]
+                signal_type = "Strong Sell" if "STRONG" in signal['Signal'] else "Sell"
+                print(f"{signal['Stock']:<8} {signal['horizon']:<8} {signal['Accuracy']:>5.1f} "
+                      f"{signal['Sharpe']:>7.2f} {display_value(signal['VIX']):>4} "
+                      f"{display_value(signal['FNG']):>4} {display_value(signal['RSI']):>4} "
+                      f"{display_value(signal['Momentum125']):>7} "
+                      f"{display_value(signal['AnnVolatility']):>8} {signal_type:<15}")
+
     # Save results
     if IN_COLAB:
         output_prefix = '/content/drive/MyDrive/complete_proprietary_signals'
@@ -3761,24 +3782,17 @@ def main():
     total_start = time.time()
     global IN_COLAB
     
-    print("🚀 ENHANCED TRADING MODEL - AGGRESSIVELY OPTIMIZED EXECUTION")
-    print("="*60)
-
     # Check if running in Colab
     try:
         import google.colab
         IN_COLAB = True
-        print("Running in Google Colab")
-
         # Mount Google Drive if not already mounted
         from google.colab import drive
         import os
         if not os.path.exists('/content/drive'):
-            print("Mounting Google Drive...")
             drive.mount('/content/drive')
     except:
         IN_COLAB = False
-        print("Not running in Google Colab")
 
     import warnings
     warnings.filterwarnings('ignore')
@@ -3788,41 +3802,23 @@ def main():
     logging.getLogger().setLevel(logging.WARNING)
 
     try:
-        print("\n1. Loading and processing data...")
-        data_start = time.time()
         merged_stock_data, macro_metadata, stock_data = load_data()
         if merged_stock_data is None:
             return
-        print(f"   Data loading completed in {time.time() - data_start:.2f}s")
         
-        print("\n2. Pre-generating features for cross-horizon reuse...")
-        feature_start = time.time()
         features_by_stock = generate_features(merged_stock_data, macro_metadata)
-        print(f"   Feature generation completed in {time.time() - feature_start:.2f}s")
         
-        # 3. Train models and generate signals with pre-generated features
-        print("\n3. Training models with pre-generated features...")
-        train_start = time.time()
         ml_model, all_signals = train_model(merged_stock_data, macro_metadata, CONFIG['HORIZONS'])
         
         ml_model._pregenerated_features = features_by_stock
-        print(f"   Model training completed in {time.time() - train_start:.2f}s")
 
         all_signals = run_shap(ml_model, all_signals)
 
-        print("\n4. Formatting and displaying results...")
-        output_start = time.time()
+        print("="*120)
+        print("**COMPREHENSIVE TRADING SIGNAL ANALYSIS WITH ALL FEATURES**")
+        print("="*120)
+        
         format_outputs(all_signals, ml_model)
-        print(f"   Output formatting completed in {time.time() - output_start:.2f}s")
-        
-        total_time = time.time() - total_start
-        print(f"\n✅ ENHANCED TRADING MODEL EXECUTION COMPLETE IN {total_time:.2f}s!")
-        print("="*60)
-        
-        if total_time < 120:  # 2 minutes
-            print(f"🎯 SUCCESS: Execution time {total_time:.2f}s is under 2-minute target!")
-        else:
-            print(f"⚠️  WARNING: Execution time {total_time:.2f}s exceeds 2-minute target")
         
         gc.collect()
 
