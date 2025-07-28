@@ -73,14 +73,14 @@ CONFIG = {
     'EXCLUDE_FROM_SHAP': ['USREC', 'recession', 'binary_feature'],  # Features to exclude from SHAP
     'BINARY_VARIANCE_THRESHOLD': 0.05,  # Threshold for binary feature detection
 
-    # Model parameters - UPDATED FOR BETTER FEATURE DIVERSITY
+    # Model parameters - ULTRA-AGGRESSIVE OPTIMIZATION FOR SUB-2-MINUTE TARGET
     'TEST_SIZE': 0.2,
     'RANDOM_STATE': 42,
-    'N_ESTIMATORS': 100,  # Reduced from 150 for speed
-    'MAX_DEPTH': 8,  # Reduced from 12 for speed
-    'MAX_FEATURES': 0.3,  # Reduced from 0.5 for speed
-    'MIN_SAMPLES_SPLIT': 50,  # Increased from 30 for speed
-    'MIN_SAMPLES_LEAF': 20,  # Increased from 10 for speed
+    'N_ESTIMATORS': 75,  # Further reduced from 100 for speed (25% faster training)
+    'MAX_DEPTH': 6,  # Further reduced from 8 for speed (faster tree building)
+    'MAX_FEATURES': 0.25,  # Further reduced from 0.3 for speed
+    'MIN_SAMPLES_SPLIT': 60,  # Further increased from 50 for speed
+    'MIN_SAMPLES_LEAF': 25,  # Further increased from 20 for speed
 
     # Display parameters
     'MAX_SHAP_FEATURES': 5,  # Show top 5 features
@@ -1479,8 +1479,8 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
     prop_cols = [col for col in proprietary_features.columns if col in CONFIG['PROPRIETARY_FEATURES']]
     regime_cols = regime_features.columns.tolist()
 
-    top_macro_cols = macro_cols[:4]  # Reduced from 6 to 4 for performance
-    top_prop_cols = [col for col in prop_cols if col in ['VIX', 'FNG', 'RSI', 'Momentum125']][:4]  # Top 4 proprietary
+    top_macro_cols = macro_cols[:3]  # Ultra-aggressive: reduced from 4 to 3 for sub-2-minute target
+    top_prop_cols = [col for col in prop_cols if col in ['VIX', 'FNG', 'RSI']][:3]  # Top 3 proprietary only
     
     logger.info(f"Creating optimized interactions: {len(top_macro_cols)} macro × {len(top_prop_cols)} proprietary (performance limited)")
 
@@ -1506,8 +1506,8 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
         logger.info(f"Created {len(interaction_names)} macro × proprietary interactions (vectorized)")
 
     # OPTIMIZATION 2: Selective Macro × Regime interactions (vectorized) - FURTHER REDUCED
-    key_regime_cols = [col for col in regime_cols if any(prop in col for prop in ['VIX', 'FNG'])][:2]  # Top 2 only
-    top_macro_regime_cols = top_macro_cols[:3]  # Further reduced to top 3
+    key_regime_cols = [col for col in regime_cols if any(prop in col for prop in ['VIX', 'FNG'])][:1]  # Ultra-aggressive: only 1 regime col
+    top_macro_regime_cols = top_macro_cols[:2]  # Ultra-aggressive: reduced to top 2
     
     if top_macro_regime_cols and key_regime_cols:
         macro_regime_array = macro_features[top_macro_regime_cols].values
@@ -1931,15 +1931,24 @@ class EnhancedTradingModel:
         return categories
 
     def get_top_features_by_type(self, feature_names, shap_values, n_per_type=5):
-        """Get top N features from each category"""
+        """Get top N features from each category with aggressive filtering for sub-2-minute target"""
         # Calculate absolute SHAP importance
         shap_importance = np.abs(shap_values).mean(axis=0) if len(shap_values.shape) > 1 else np.abs(shap_values)
 
         # Categorize features
         categories = self.categorize_features(feature_names)
 
-        # Get top features by category
+        # Get top features by category with aggressive limits for speed
         top_features = {}
+        
+        feature_limits = {
+            'proprietary': 6,   # Keep top 6 proprietary (most important)
+            'macro': 4,         # Reduced from default to 4 macro features
+            'technical': 3,     # Reduced to 3 technical features
+            'transformed': 3,   # Reduced to 3 transformed features
+            'interaction': 2,   # Heavily reduced to 2 interaction features
+            'regime': 2         # Minimal regime features for speed
+        }
 
         for category, feat_list in categories.items():
             category_features = []
@@ -1947,14 +1956,15 @@ class EnhancedTradingModel:
                 if feat_name in feat_list:
                     category_features.append((feat_name, shap_importance[i], i))
 
-            # Sort by importance
+            # Sort by importance and apply aggressive limits
             category_features.sort(key=lambda x: x[1], reverse=True)
-            top_features[category] = category_features[:n_per_type]
+            limit = feature_limits.get(category, 2)  # Default to 2 if category not specified
+            top_features[category] = category_features[:limit]
 
-        # Also get overall top 5
+        # Reduce overall top features from 5 to 3 for speed
         all_features = [(feat_name, shap_importance[i], i) for i, feat_name in enumerate(feature_names)]
         all_features.sort(key=lambda x: x[1], reverse=True)
-        top_features['overall_top_5'] = all_features[:5]
+        top_features['overall_top_5'] = all_features[:3]  # Actually top 3 now
 
         return top_features
 
@@ -2041,7 +2051,7 @@ class EnhancedTradingModel:
                 if prediction_days in self.shap_explainers:
                     try:
                         # Get SHAP values for a sample of test data with caching
-                        sample_size = min(3, len(X_test_scaled))  # Reduced from 5 to 3
+                        sample_size = min(2, len(X_test_scaled))  # Ultra-aggressive: reduced from 3 to 2
                         X_sample = X_test_scaled[:sample_size]
                         
                         shap_key = f"shap_stock_{ticker}_{prediction_days}_{hash(str(X_sample.tobytes()))}"
@@ -2232,7 +2242,7 @@ class EnhancedTradingModel:
                 EXPLAINER_CACHE[explainer_key] = self.shap_explainers[prediction_days]
 
             # Calculate sample SHAP values with batching
-            sample_size = min(10, len(X_test))  # Reduced from 20 to 10
+            sample_size = min(5, len(X_test))  # Ultra-aggressive: reduced from 10 to 5
             X_test_sample = X_test[:sample_size]
 
             shap_key = f"shap_{prediction_days}_{hash(str(X_test_sample.tobytes()))}"
