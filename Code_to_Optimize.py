@@ -3075,12 +3075,12 @@ def create_complete_playbook_tables(df, horizon):
             "Mom125": f"{get_performance_indicator(row['Momentum125'], 'momentum')}{prop_values['Momentum125']}%",
             "PriceStr": prop_values['PriceStrength'],
             "VolBreadth": prop_values['VolumeBreadth'],
-            "MACD": prop_values['MACD'],
-            "ATR": prop_values['ATR'],
-            "ADX": prop_values['ADX'],
-            "StochRSI": prop_values['StochRSI'],
-            "CCI": prop_values['CCI'],
-            "MFI": prop_values['MFI'],
+            "MACD": prop_values.get('MACD', 'N/A'),
+            "ATR": prop_values.get('ATR', 'N/A'),
+            "ADX": prop_values.get('ADX', 'N/A'),
+            "StochRSI": prop_values.get('StochRSI', 'N/A'),
+            "CCI": prop_values.get('CCI', 'N/A'),
+            "MFI": prop_values.get('MFI', 'N/A'),
             "News": prop_values['NewsScore'],
             "CallPut": prop_values['CallPut']
         })
