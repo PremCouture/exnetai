@@ -1918,7 +1918,7 @@ class EnhancedTradingModel:
                     logger.warning(f"Suspiciously high accuracy {metrics['test']['accuracy']:.1f}% for {horizon}d horizon - check for data leakage")
 
     def categorize_features(self, feature_names):
-        """Categorize features by type"""
+        """Categorize features by type with proper technical vs proprietary distinction"""
         categories = {
             'macro': [],
             'proprietary': [],
@@ -1928,18 +1928,33 @@ class EnhancedTradingModel:
             'interaction': []
         }
 
+        # Define truly proprietary features (unique to this system)
+        truly_proprietary = ['VIX', 'FNG', 'AnnVolatility', 'Momentum125', 
+                           'PriceStrength', 'VolumeBreadth', 'CallPut', 'NewsScore']
+        
+        # Define traditional technical indicators
+        technical_indicators = ['RSI', 'MACD', 'BollingerBandWidth', 'ATR', 'StochRSI',
+                              'OBV', 'CMF', 'ADX', 'Williams_R', 'CCI', 'MFI']
+
         for feat in feature_names:
             if '_X_' in feat:
                 categories['interaction'].append(feat)
-            elif feat in CONFIG['PROPRIETARY_FEATURES']:
+            elif feat in truly_proprietary:
                 categories['proprietary'].append(feat)
+            elif feat in technical_indicators:
+                categories['technical'].append(feat)
             elif any(f'{prop}_' in feat for prop in CONFIG['PROPRIETARY_FEATURES']):
                 if any(transform in feat for transform in ['_log', '_square', '_sqrt', '_rank', '_pct', '_zscore']):
                     categories['transformed'].append(feat)
                 elif any(regime in feat for regime in ['_high', '_low', '_extreme', '_neutral']):
                     categories['regime'].append(feat)
                 else:
-                    categories['technical'].append(feat)
+                    # Check if base feature is technical or proprietary
+                    base_feat = feat.split('_')[0]
+                    if base_feat in technical_indicators:
+                        categories['technical'].append(feat)
+                    else:
+                        categories['proprietary'].append(feat)
             elif 'fred_' in feat:
                 categories['macro'].append(feat)
             else:
