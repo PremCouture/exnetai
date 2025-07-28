@@ -2055,7 +2055,7 @@ class EnhancedTradingModel:
             limit = feature_limits.get(category, 2)  # Default to 2 if category not specified
             top_features[category] = category_features[:limit]
 
-        # Create balanced overall top 2: prioritize 1 macro + 1 technical/proprietary
+        # Create balanced overall top 2: prioritize 1 macro + 1 proprietary (ALWAYS)
         balanced_top_2 = []
         
         logger.info(f"\n🔍 BALANCED SELECTION DEBUG:")
@@ -2065,50 +2065,47 @@ class EnhancedTradingModel:
             else:
                 logger.info(f"  {cat}: 0 features")
         
-        # First priority: get 1 macro feature with diversity consideration
-        if top_features.get('macro'):
-            # Implement diversity logic to avoid always selecting the same indicator
-            macro_features = top_features['macro']
+        macro_candidates = []
+        for i, feat_name in enumerate(feature_names):
+            if feat_name.startswith('fred_'):  # Direct macro feature identification
+                macro_candidates.append((feat_name, shap_importance[i], i))
+        
+        if macro_candidates:
+            # Sort by importance and apply diversity penalty
+            macro_candidates.sort(key=lambda x: x[1], reverse=True)
             
             # Add diversity penalty for frequently selected features
             if hasattr(self, 'macro_selection_history'):
-                adjusted_macro_features = []
-                for feat_name, importance, idx in macro_features:
+                adjusted_macro_candidates = []
+                for feat_name, importance, idx in macro_candidates:
                     base_indicator = feat_name.replace('fred_', '').split('_')[0]
-                    penalty = self.macro_selection_history.get(base_indicator, 0) * 0.1
+                    penalty = self.macro_selection_history.get(base_indicator, 0) * 0.01  # Reduced penalty
                     adjusted_importance = importance - penalty
-                    adjusted_macro_features.append((feat_name, adjusted_importance, idx))
-                adjusted_macro_features.sort(key=lambda x: x[1], reverse=True)
-                macro_features = adjusted_macro_features
+                    adjusted_macro_candidates.append((feat_name, adjusted_importance, idx))
+                adjusted_macro_candidates.sort(key=lambda x: x[1], reverse=True)
+                macro_candidates = adjusted_macro_candidates
             
-            macro_feat = macro_features[0]
+            macro_feat = macro_candidates[0]
+            balanced_top_2.append(macro_feat)
             
-            if macro_feat[1] >= importance_threshold:
-                balanced_top_2.append(macro_feat)
-                
-                # Track selection for diversity
-                if not hasattr(self, 'macro_selection_history'):
-                    self.macro_selection_history = {}
-                base_indicator = macro_feat[0].replace('fred_', '').split('_')[0]
-                self.macro_selection_history[base_indicator] = self.macro_selection_history.get(base_indicator, 0) + 1
-                
-                logger.info(f"  ✅ Added macro: {macro_feat[0]} (importance: {macro_feat[1]:.4f})")
-                logger.info(f"  📊 Macro selection history: {dict(self.macro_selection_history)}")
-            else:
-                logger.warning(f"  ⚠️  Best macro feature {macro_feat[0]} below threshold after diversity penalty")
+            # Track selection for diversity
+            if not hasattr(self, 'macro_selection_history'):
+                self.macro_selection_history = {}
+            base_indicator = macro_feat[0].replace('fred_', '').split('_')[0]
+            self.macro_selection_history[base_indicator] = self.macro_selection_history.get(base_indicator, 0) + 1
+            
+            logger.info(f"  ✅ FORCED macro inclusion: {macro_feat[0]} (importance: {macro_feat[1]:.6f})")
+            logger.info(f"  📊 Macro selection history: {dict(self.macro_selection_history)}")
         else:
-            logger.warning(f"  ⚠️  No macro features available!")
+            logger.warning(f"  ⚠️  No macro features found in feature set!")
         
-        tech_or_prop = []
-        if top_features.get('technical'):
-            tech_or_prop.extend(top_features['technical'])
-            logger.info(f"  📊 Technical features available: {[f[0] for f in top_features['technical']]}")
-        if top_features.get('proprietary'):
-            tech_or_prop.extend(top_features['proprietary'])
-            logger.info(f"  🏢 Proprietary features available: {[f[0] for f in top_features['proprietary']]}")
+        proprietary_candidates = []
+        for i, feat_name in enumerate(feature_names):
+            if feat_name in CONFIG['PROPRIETARY_FEATURES']:  # Direct proprietary feature identification
+                proprietary_candidates.append((feat_name, shap_importance[i], i))
         
-        # Prioritize core indicators over derived ones within technical/proprietary
-        if tech_or_prop:
+        if proprietary_candidates:
+            # Prioritize core indicators over derived ones
             core_indicators = ['Volume', 'SMA20', 'BL20', 'BH20', 'RSI', 'AnnVolatility', 
                              'Momentum125', 'PriceStrength', 'VolumeBreadth', 'VIX', 'FNG']
             
@@ -2116,55 +2113,55 @@ class EnhancedTradingModel:
             core_features = []
             derived_features = []
             
-            for feat_name, importance, idx in tech_or_prop:
+            for feat_name, importance, idx in proprietary_candidates:
                 if feat_name in core_indicators:
                     core_features.append((feat_name, importance, idx))
                 else:
                     derived_features.append((feat_name, importance, idx))
             
-            logger.info(f"  🎯 Core indicators available: {[f[0] for f in core_features]}")
-            logger.info(f"  📈 Derived indicators available: {[f[0] for f in derived_features]}")
-            
-            # importance_threshold already set above
+            logger.info(f"  🎯 Core proprietary available: {[f[0] for f in core_features]}")
+            logger.info(f"  📈 Derived proprietary available: {[f[0] for f in derived_features]}")
             
             # Prioritize core indicators first, then derived if no core available
             if core_features:
                 core_features.sort(key=lambda x: x[1], reverse=True)
-                tech_feat = core_features[0]
-                logger.info(f"  ✅ Selected CORE indicator: {tech_feat[0]} (importance: {tech_feat[1]:.4f})")
+                prop_feat = core_features[0]
+                logger.info(f"  ✅ FORCED proprietary inclusion (CORE): {prop_feat[0]} (importance: {prop_feat[1]:.6f})")
             elif derived_features:
                 derived_features.sort(key=lambda x: x[1], reverse=True)
-                tech_feat = derived_features[0]
-                logger.info(f"  ⚠️  Selected DERIVED indicator: {tech_feat[0]} (importance: {tech_feat[1]:.4f})")
+                prop_feat = derived_features[0]
+                logger.info(f"  ✅ FORCED proprietary inclusion (DERIVED): {prop_feat[0]} (importance: {prop_feat[1]:.6f})")
             else:
-                tech_feat = tech_or_prop[0]  # Fallback
-                logger.info(f"  🔄 Fallback selection: {tech_feat[0]} (importance: {tech_feat[1]:.4f})")
+                prop_feat = proprietary_candidates[0]  # Fallback to any proprietary
+                logger.info(f"  🔄 FORCED proprietary inclusion (FALLBACK): {prop_feat[0]} (importance: {prop_feat[1]:.6f})")
             
-            if tech_feat[1] >= importance_threshold:
-                balanced_top_2.append(tech_feat)
-            else:
-                logger.warning(f"  ⚠️  Best tech/prop feature {tech_feat[0]} below threshold {importance_threshold:.3f}")
+            balanced_top_2.append(prop_feat)
         else:
-            logger.warning(f"  ⚠️  No technical/proprietary features available!")
+            logger.warning(f"  ⚠️  No proprietary features found in feature set!")
         
-        # Check if we have enough significant features for a reliable signal
-        if len(balanced_top_2) == 0:
-            logger.warning(f"  🚨 NO FEATURES above importance threshold - signal will be skipped for advisor clarity")
-            return {'overall_top_2': [], 'skip_signal': True}
-        
-        if len(balanced_top_2) == 1:
-            logger.warning(f"  ⚠️  Only 1 significant feature - consider if signal is reliable enough")
-        
-        # Fallback only if we have some significant features but need more balance
-        if len(balanced_top_2) < 2 and len(significant_features) >= 2:
-            logger.warning(f"  🔄 FALLBACK: Adding second-best significant feature for balance")
-            
-            used_features = {f[0] for f in balanced_top_2}
-            for i, feat_name in enumerate(significant_features):
-                if feat_name not in used_features and significant_importance[i] >= importance_threshold:
-                    balanced_top_2.append((feat_name, significant_importance[i], i))
-                    logger.info(f"  🔄 FALLBACK added: {feat_name} (importance: {significant_importance[i]:.4f})")
-                    break
+        # Ensure we have exactly 2 features: 1 macro + 1 proprietary
+        if len(balanced_top_2) != 2:
+            logger.warning(f"  ⚠️  Expected 2 features (1 macro + 1 proprietary), got {len(balanced_top_2)}")
+            if len(balanced_top_2) == 0:
+                logger.warning(f"  🚨 NO FEATURES selected - signal will be skipped for advisor clarity")
+                return {'overall_top_2': [], 'skip_signal': True}
+            elif len(balanced_top_2) == 1:
+                logger.warning(f"  ⚠️  Only 1 feature selected - adding fallback for balance")
+                selected_names = {feat[0] for feat in balanced_top_2}
+                remaining_features = [(significant_features[i], significant_importance[i], i) 
+                                    for i in range(len(significant_features)) 
+                                    if significant_features[i] not in selected_names]
+                
+                if remaining_features:
+                    remaining_features.sort(key=lambda x: x[1], reverse=True)
+                    fallback_feat = remaining_features[0]
+                    balanced_top_2.append(fallback_feat)
+                    logger.info(f"  🔄 FALLBACK added: {fallback_feat[0]} (importance: {fallback_feat[1]:.6f})")
+            elif len(balanced_top_2) > 2:
+                # Keep only top 2 by importance
+                balanced_top_2.sort(key=lambda x: x[1], reverse=True)
+                balanced_top_2 = balanced_top_2[:2]
+                logger.info(f"  ✂️  Trimmed to top 2 features by importance")
         
         top_features['overall_top_2'] = balanced_top_2
         top_features['skip_signal'] = False
