@@ -1940,12 +1940,12 @@ class EnhancedTradingModel:
         top_features = {}
         
         feature_limits = {
-            'proprietary': 6,   # Keep top 6 proprietary (most important)
-            'macro': 4,         # Reduced from default to 4 macro features
-            'technical': 3,     # Reduced to 3 technical features
-            'transformed': 3,   # Reduced to 3 transformed features
-            'interaction': 2,   # Heavily reduced to 2 interaction features
-            'regime': 2         # Minimal regime features for speed
+            'proprietary': 2,   # EXTREME: Only top 2 proprietary for sub-2-minute target
+            'macro': 1,         # EXTREME: Only 1 macro feature
+            'technical': 1,     # EXTREME: Only 1 technical feature
+            'transformed': 1,   # EXTREME: Only 1 transformed feature
+            'interaction': 1,   # EXTREME: Only 1 interaction feature
+            'regime': 1         # EXTREME: Only 1 regime feature for maximum speed
         }
 
         for category, feat_list in categories.items():
@@ -1959,10 +1959,10 @@ class EnhancedTradingModel:
             limit = feature_limits.get(category, 2)  # Default to 2 if category not specified
             top_features[category] = category_features[:limit]
 
-        # Reduce overall top features from 5 to 3 for speed
+        # EXTREME: Reduce overall top features to only 2 for sub-2-minute target
         all_features = [(feat_name, shap_importance[i], i) for i, feat_name in enumerate(feature_names)]
         all_features.sort(key=lambda x: x[1], reverse=True)
-        top_features['overall_top_5'] = all_features[:3]  # Actually top 3 now
+        top_features['overall_top_5'] = all_features[:2]  # EXTREME: Only top 2 features
 
         return top_features
 
@@ -2240,7 +2240,7 @@ class EnhancedTradingModel:
                 EXPLAINER_CACHE[explainer_key] = self.shap_explainers[prediction_days]
 
             # Calculate sample SHAP values with batching
-            sample_size = min(5, len(X_test))  # Ultra-aggressive: reduced from 10 to 5
+            sample_size = min(1, len(X_test))  # EXTREME: reduced to 1 for sub-2-minute target
             X_test_sample = X_test[:sample_size]
 
             shap_key = f"shap_{prediction_days}_{hash(str(X_test_sample.tobytes()))}"
