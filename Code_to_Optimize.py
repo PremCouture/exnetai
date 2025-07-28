@@ -773,6 +773,7 @@ def standardize_columns(df):
     column_mapping = {
         'close': 'Close', 'open': 'Open', 'high': 'High',
         'low': 'Low', 'volume': 'Volume', 'adj close': 'Adj Close',
+        'sma20': 'SMA20', 'bl20': 'BL20', 'bh20': 'BH20',
         'vix': 'VIX', 'fng': 'FNG', 'annvolatility': 'AnnVolatility',
         'momentum125': 'Momentum125', 'pricestrength': 'PriceStrength',
         'volumebreadth': 'VolumeBreadth', 'callput': 'CallPut',
@@ -1261,6 +1262,28 @@ def create_proprietary_features(df):
                 pd.Series(close_prices, index=df.index)
             )
         features['VolumeBreadth'] = feature_cache['vol_breadth_calc'].fillna(1)
+
+    if 'Volume' in df.columns:
+        features['Volume'] = df['Volume']
+    else:
+        features['Volume'] = pd.Series(1000000, index=df.index)
+
+    if 'SMA20' in df.columns:
+        features['SMA20'] = df['SMA20']
+    else:
+        if 'sma20_calc' not in feature_cache:
+            feature_cache['sma20_calc'] = pd.Series(close_prices, index=df.index).rolling(20).mean()
+        features['SMA20'] = feature_cache['sma20_calc'].fillna(method='bfill')
+
+    if 'BL20' in df.columns and 'BH20' in df.columns:
+        features['BL20'] = df['BL20']
+        features['BH20'] = df['BH20']
+    else:
+        if 'bb_bands_calc' not in feature_cache:
+            bb_data = calculate_bollinger_bands(pd.Series(close_prices, index=df.index))
+            feature_cache['bb_bands_calc'] = bb_data
+        features['BL20'] = feature_cache['bb_bands_calc']['lower'].fillna(method='bfill')
+        features['BH20'] = feature_cache['bb_bands_calc']['upper'].fillna(method='bfill')
 
     # Call/Put Ratio - only include if present in data
     if 'CallPut' in df.columns:
