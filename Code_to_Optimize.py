@@ -86,12 +86,11 @@ CONFIG = {
     'MAX_SHAP_FEATURES': 2,  # Show top 2 features
     'CONFIDENCE_THRESHOLD': 45,
 
-    # ALL Proprietary/Technical features to ALWAYS include
+    # ALL Proprietary/Technical features to ALWAYS include (from CSV stock files)
     'PROPRIETARY_FEATURES': [
-        'VIX', 'FNG', 'RSI', 'AnnVolatility', 'Momentum125',
-        'PriceStrength', 'VolumeBreadth', 'CallPut', 'NewsScore',
-        'MACD', 'BollingerBandWidth', 'ATR', 'StochRSI',
-        'OBV', 'CMF', 'ADX', 'Williams_R', 'CCI', 'MFI'
+        'Volume', 'SMA20', 'BL20', 'BH20', 'RSI', 'AnnVolatility', 
+        'Momentum125', 'PriceStrength', 'VolumeBreadth', 'VIX', 'FNG',
+        'NewsScore', 'CallPut'  # Future use when live data is fed
     ],
 
     # Regime thresholds for binary flags
@@ -1918,7 +1917,7 @@ class EnhancedTradingModel:
                     logger.warning(f"Suspiciously high accuracy {metrics['test']['accuracy']:.1f}% for {horizon}d horizon - check for data leakage")
 
     def categorize_features(self, feature_names):
-        """Categorize features by type with proper technical vs proprietary distinction"""
+        """Categorize features by type using CONFIG proprietary features from CSV stock files"""
         categories = {
             'macro': [],
             'proprietary': [],
@@ -1928,12 +1927,11 @@ class EnhancedTradingModel:
             'interaction': []
         }
 
-        # Define truly proprietary features (unique to this system)
-        truly_proprietary = ['VIX', 'FNG', 'AnnVolatility', 'Momentum125', 
-                           'PriceStrength', 'VolumeBreadth', 'CallPut', 'NewsScore']
+        # Use CONFIG proprietary features (from user's CSV stock files)
+        proprietary_features = CONFIG['PROPRIETARY_FEATURES']
         
-        # Define traditional technical indicators
-        technical_indicators = ['RSI', 'MACD', 'BollingerBandWidth', 'ATR', 'StochRSI',
+        # Define traditional technical indicators NOT in user's CSV
+        technical_indicators = ['MACD', 'BollingerBandWidth', 'ATR', 'StochRSI',
                               'OBV', 'CMF', 'ADX', 'Williams_R', 'CCI', 'MFI']
 
         for feat in feature_names:
@@ -1944,17 +1942,17 @@ class EnhancedTradingModel:
             # Check for regime features
             elif any(regime in feat for regime in ['_high', '_low', '_extreme', '_neutral']):
                 categories['regime'].append(feat)
-            elif feat in truly_proprietary:
+            elif feat in proprietary_features:
                 categories['proprietary'].append(feat)
             elif feat in technical_indicators:
                 categories['technical'].append(feat)
-            elif any(f'{prop}_' in feat for prop in CONFIG['PROPRIETARY_FEATURES']):
-                # Check if base feature is technical or proprietary
+            elif any(f'{prop}_' in feat for prop in proprietary_features):
+                # Check if base feature is proprietary
                 base_feat = feat.split('_')[0]
-                if base_feat in technical_indicators:
-                    categories['technical'].append(feat)
-                else:
+                if base_feat in proprietary_features:
                     categories['proprietary'].append(feat)
+                else:
+                    categories['technical'].append(feat)
             elif 'fred_' in feat:
                 categories['macro'].append(feat)
             else:
@@ -2022,8 +2020,8 @@ class EnhancedTradingModel:
         
         # Prioritize core indicators over derived ones within technical/proprietary
         if tech_or_prop:
-            core_indicators = ['VIX', 'FNG', 'RSI', 'MACD', 'AnnVolatility', 'Momentum125', 
-                             'PriceStrength', 'VolumeBreadth', 'StochRSI', 'OBV', 'CMF']
+            core_indicators = ['Volume', 'SMA20', 'BL20', 'BH20', 'RSI', 'AnnVolatility', 
+                             'Momentum125', 'PriceStrength', 'VolumeBreadth', 'VIX', 'FNG']
             
             # Separate core vs derived features
             core_features = []
