@@ -2912,14 +2912,25 @@ def create_complete_playbook_tables(df, horizon):
 
     complete_df = pd.DataFrame(complete_rows)
 
-    # Print COMPLETE proprietary features table with fast formatting
+    # Print COMPLETE proprietary features table with improved formatting
     print(f"\n📈 **{horizon}-DAY COMPLETE PROPRIETARY FEATURES TABLE**")
     print("```")
     headers = complete_df.columns.tolist()
-    print(" | ".join(headers))
-    print(" | ".join(["-" * len(h) for h in headers]))
+    
+    # Calculate column widths for proper alignment
+    col_widths = {}
+    for col in headers:
+        col_widths[col] = max(len(str(col)), max(len(str(val)) for val in complete_df[col]))
+    
+    header_row = " | ".join([str(h).ljust(col_widths[h]) for h in headers])
+    print(header_row)
+    
+    separator_row = " | ".join(["-" * col_widths[h] for h in headers])
+    print(separator_row)
+    
     for _, row in complete_df.iterrows():
-        print(" | ".join([str(row[col]) for col in headers]))
+        data_row = " | ".join([str(row[col]).ljust(col_widths[col]) for col in headers])
+        print(data_row)
     print("```")
 
     # Prepare SHAP analysis table - vectorized approach
@@ -2939,14 +2950,25 @@ def create_complete_playbook_tables(df, horizon):
 
     shap_df = pd.DataFrame(shap_rows)
 
-    # Print SHAP analysis table with fast formatting
+    # Print SHAP analysis table with improved formatting
     print(f"\n🔍 **{horizon}-DAY SHAP FEATURE ANALYSIS**")
     print("```")
     headers = shap_df.columns.tolist()
-    print(" | ".join(headers))
-    print(" | ".join(["-" * len(h) for h in headers]))
+    
+    # Calculate column widths for proper alignment
+    col_widths = {}
+    for col in headers:
+        col_widths[col] = max(len(str(col)), max(len(str(val)) for val in shap_df[col]))
+    
+    header_row = " | ".join([str(h).ljust(col_widths[h]) for h in headers])
+    print(header_row)
+    
+    separator_row = " | ".join(["-" * col_widths[h] for h in headers])
+    print(separator_row)
+    
     for _, row in shap_df.iterrows():
-        print(" | ".join([str(row[col]) for col in headers]))
+        data_row = " | ".join([str(row[col]).ljust(col_widths[col]) for col in headers])
+        print(data_row)
     print("```")
 
     # Summary statistics
@@ -2966,10 +2988,10 @@ def create_complete_playbook_tables(df, horizon):
                     'coverage': len(values) / len(df) * 100
                 }
 
-    # Print proprietary feature statistics
+    # Print proprietary feature statistics with improved formatting
     print("\n**Proprietary Feature Statistics:**")
-    print(f"{'Feature':<15} {'Mean':>10} {'Std':>10} {'Min':>10} {'Max':>10} {'Coverage':>10}")
-    print("-" * 70)
+    print(f"{'Feature':<20} {'Mean':>12} {'Std':>12} {'Min':>12} {'Max':>12} {'Coverage':>10}")
+    print("-" * 78)
 
     for feat, stats in prop_stats.items():
         print(f"{feat:<15} {stats['mean']:>10.1f} {stats['std']:>10.1f} "
