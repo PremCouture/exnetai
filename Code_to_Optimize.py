@@ -1994,10 +1994,35 @@ class EnhancedTradingModel:
             limit = feature_limits.get(category, 2)  # Default to 2 if category not specified
             top_features[category] = category_features[:limit]
 
-        # Update overall top features to match actual count (2 features)
-        all_features = [(feat_name, shap_importance[i], i) for i, feat_name in enumerate(feature_names)]
-        all_features.sort(key=lambda x: x[1], reverse=True)
-        top_features['overall_top_2'] = all_features[:2]  # Match actual feature count
+        # Create balanced overall top 2: prioritize 1 macro + 1 technical/proprietary
+        balanced_top_2 = []
+        
+        # First priority: get 1 macro feature if available
+        if top_features.get('macro'):
+            balanced_top_2.append(top_features['macro'][0])
+        
+        tech_or_prop = []
+        if top_features.get('technical'):
+            tech_or_prop.extend(top_features['technical'])
+        if top_features.get('proprietary'):
+            tech_or_prop.extend(top_features['proprietary'])
+        
+        # Sort by importance and take the best technical/proprietary
+        if tech_or_prop:
+            tech_or_prop.sort(key=lambda x: x[1], reverse=True)
+            balanced_top_2.append(tech_or_prop[0])
+        
+        if len(balanced_top_2) < 2:
+            all_features = [(feat_name, shap_importance[i], i) for i, feat_name in enumerate(feature_names)]
+            all_features.sort(key=lambda x: x[1], reverse=True)
+            
+            for feat_name, importance, idx in all_features:
+                if (feat_name, importance, idx) not in balanced_top_2:
+                    balanced_top_2.append((feat_name, importance, idx))
+                    if len(balanced_top_2) >= 2:
+                        break
+        
+        top_features['overall_top_2'] = balanced_top_2[:2]  # Ensure exactly 2 features
 
         return top_features
 
@@ -2765,7 +2790,7 @@ def generate_signals_with_shap(stock_data, ml_model, macro_metadata, timeframe=3
                 'win_rate': float(win_rate),
                 'max_drawdown': float(max_drawdown),
                 'Drawdown': float(max_drawdown),
-                'shap_top_5': shap_display,
+                'shap_top_2': shap_display,
                 'SHAP': shap_display,
                 'driver_type': driver_type,
                 'indicators': indicators,
@@ -2989,7 +3014,7 @@ def create_complete_playbook_tables(df, horizon):
 
         shap_rows.append({
             "Ticker": row['Stock'],
-            "Top 5 SHAP Features": row.get('SHAP', 'N/A'),
+            "Top 2 SHAP Features": row.get('SHAP', 'N/A'),
             "Feature Types Present": presence_str or "None",
             "Driver": row.get('driver_type', 'Unknown')
         })
@@ -3044,7 +3069,7 @@ def create_complete_playbook_tables(df, horizon):
               f"{stats['min']:>10.1f} {stats['max']:>10.1f} {stats['coverage']:>9.1f}%")
 
     # Feature type presence in top 5
-    print("\n**Feature Type Presence in Top 5 SHAP:**")
+    print("\n**Feature Type Presence in Top 2 SHAP:**")
     type_counts = defaultdict(int)
     for _, row in df.iterrows():
         if 'feature_presence' in row:
@@ -3058,7 +3083,7 @@ def create_complete_playbook_tables(df, horizon):
 
     # Warning if proprietary features are underrepresented
     if type_counts.get('proprietary', 0) < len(df) * 0.3:
-        print("\n⚠️  WARNING: Proprietary features appear in less than 30% of top 5 SHAP features!")
+        print("\n⚠️  WARNING: Proprietary features appear in less than 30% of top 2 SHAP features!")
 
     # IF/THEN examples
     print(f"\n💡 **{horizon}-DAY IF/THEN LOGIC EXAMPLES**")
@@ -3125,7 +3150,7 @@ def analyze_feature_diversity_complete(all_signals, ml_model):
         print("{:<20} {:>15} {:>15} {:>15}".format(feat, *coverages))
 
     # Detailed feature type analysis
-    print("\n📊 **FEATURE TYPE REPRESENTATION IN TOP 5 SHAP**")
+    print("\n📊 **FEATURE TYPE REPRESENTATION IN TOP 2 SHAP**")
 
     for feat_type in ['proprietary', 'macro', 'technical', 'interaction', 'regime', 'transformed']:
         print(f"\n--- {feat_type.upper()} Features ---")
@@ -3138,7 +3163,7 @@ def analyze_feature_diversity_complete(all_signals, ml_model):
             all_features.update(feature_counts[horizon][feat_type].keys())
 
         if not all_features:
-            print(f"  NO {feat_type} features found in top 5 SHAP!")
+            print(f"  NO {feat_type} features found in top 2 SHAP!")
             continue
 
         # Sort by total frequency
@@ -3193,7 +3218,7 @@ def analyze_feature_diversity_complete(all_signals, ml_model):
             missing_proprietary.add(feat)
 
     if missing_proprietary:
-        print(f"\n⚠️  These proprietary features NEVER appear in top 5 SHAP: {missing_proprietary}")
+        print(f"\n⚠️  These proprietary features NEVER appear in top 2 SHAP: {missing_proprietary}")
         warnings_found = True
 
     if not warnings_found:
