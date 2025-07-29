@@ -81,7 +81,7 @@ CONFIG = {
     'MAX_DEPTH': 6,  # Further reduced from 8 for speed (faster tree building)
     'MAX_FEATURES': 0.25,  # Further reduced from 0.3 for speed
     'MIN_SAMPLES_SPLIT': 60,  # Further increased from 50 for speed
-    'MIN_SAMPLES_LEAF': 25,  # Further increased from 20 for speed
+    'MIN_SAMPLES_LEAF': 5,  # Reduced to capture proprietary feature nuances
 
     # Display parameters
     'MAX_SHAP_FEATURES': 2,  # Show top 2 features
@@ -1507,7 +1507,7 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
     
     logger.info(f"Creating optimized interactions: {len(top_macro_cols)} macro × {len(top_prop_cols)} proprietary (performance limited)")
 
-    # OPTIMIZATION 1: Vectorized Macro × Proprietary interactions
+    # OPTIMIZATION 1: Enhanced Macro × Proprietary interactions with polynomial features
     if top_macro_cols and top_prop_cols:
         macro_array = macro_features[top_macro_cols].values
         prop_array = proprietary_features[top_prop_cols].values
@@ -1527,6 +1527,43 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
         interaction_features = pd.concat([interaction_features, interaction_df], axis=1)
         
         logger.info(f"Created {len(interaction_names)} macro × proprietary interactions (vectorized)")
+        
+        # ENHANCEMENT: Add polynomial features for key proprietary indicators
+        polynomial_features = pd.DataFrame(index=macro_features.index)
+        
+        if 'VIX' in proprietary_features.columns:
+            vix_data = proprietary_features['VIX'].values
+            polynomial_features['VIX_squared'] = vix_data ** 2
+            polynomial_features['VIX_cubed'] = vix_data ** 3
+            
+        if 'FNG' in proprietary_features.columns:
+            fng_data = proprietary_features['FNG'].values
+            polynomial_features['FNG_squared'] = fng_data ** 2
+            
+            if 'RSI' in proprietary_features.columns:
+                rsi_data = proprietary_features['RSI'].values
+                polynomial_features['FNG_X_RSI'] = fng_data * rsi_data
+                polynomial_features['FNG_RSI_squared'] = (fng_data * rsi_data) ** 2
+        
+        # RSI polynomial features
+        if 'RSI' in proprietary_features.columns:
+            rsi_data = proprietary_features['RSI'].values
+            polynomial_features['RSI_squared'] = rsi_data ** 2
+            
+        # Volume-based polynomial features
+        if 'Volume' in proprietary_features.columns:
+            vol_data = proprietary_features['Volume'].values
+            polynomial_features['Volume_squared'] = vol_data ** 2
+            
+        # Momentum polynomial features
+        if 'Momentum125' in proprietary_features.columns:
+            mom_data = proprietary_features['Momentum125'].values
+            polynomial_features['Momentum125_squared'] = mom_data ** 2
+            
+        # Add polynomial features to interactions
+        if len(polynomial_features.columns) > 0:
+            interaction_features = pd.concat([interaction_features, polynomial_features], axis=1)
+            logger.info(f"Added {len(polynomial_features.columns)} polynomial proprietary features")
 
     # OPTIMIZATION 2: Selective Macro × Regime interactions (vectorized) - FURTHER REDUCED
     key_regime_cols = [col for col in regime_cols if any(prop in col for prop in ['VIX', 'FNG'])][:1]  # Ultra-aggressive: only 1 regime col
@@ -1975,9 +2012,11 @@ class EnhancedTradingModel:
             elif feat in technical_indicators:
                 categories['technical'].append(feat)
             elif any(f'{prop}_' in feat for prop in proprietary_features):
-                # Check if base feature is proprietary
+                # Check if base feature is proprietary (including polynomial features)
                 base_feat = feat.split('_')[0]
                 if base_feat in proprietary_features:
+                    categories['proprietary'].append(feat)
+                elif any(prop in feat for prop in ['VIX', 'FNG', 'RSI', 'Volume', 'Momentum125']) and any(poly in feat for poly in ['squared', 'cubed', '_X_']):
                     categories['proprietary'].append(feat)
                 else:
                     categories['technical'].append(feat)
@@ -3093,7 +3132,7 @@ def get_performance_indicator(value: float, metric_type: str) -> str:
         return "🟢" if value > -5 else "🟡" if value > -10 else "🔴" if value < -20 else "⚪"
     return ""
 
-def format_trade_playbook_table(signal_data: list, horizon: int) -> str:
+def format_trade_playbook_table(signal_data: list) -> str:
     """
     Format a markdown table for the trade playbook, suitable for Colab, notebooks, or exports.
     Each entry in signal_data should be a dict with keys:
@@ -3103,7 +3142,6 @@ def format_trade_playbook_table(signal_data: list, horizon: int) -> str:
     table = []
 
     for s in signal_data:
-        # Direction symbol
         dir_symbol = "↑" if s.get("direction", "").lower() == "up" else "↓"
 
         acc = s.get("accuracy", 0)
@@ -3115,14 +3153,12 @@ def format_trade_playbook_table(signal_data: list, horizon: int) -> str:
             acc_str = f"🔴{acc:.1f}%"
 
         sharpe = s.get("sharpe", 0)
-        sharpe_str = f"{sharpe:.2f}"
         sharpe_icon = "🟢" if sharpe > 2 else "🟡" if sharpe > 1 else "🔴"
-        sharpe_str = f"{sharpe_icon}{sharpe_str}"
+        sharpe_str = f"{sharpe_icon}{sharpe:.2f}"
 
         dd = s.get("drawdown", 0)
-        dd_str = f"{dd:.1f}%"
         dd_icon = "🟢" if dd > -10 else "🟡" if dd > -30 else "🔴"
-        dd_str = f"{dd_icon}{dd_str}"
+        dd_str = f"{dd_icon}{dd:.1f}%"
 
         shap_feats = s.get("shap_features", [])[:2]
         shap_display = []
@@ -3146,10 +3182,8 @@ def format_trade_playbook_table(signal_data: list, horizon: int) -> str:
         ]
         table.append(row)
 
-    markdown_table = "```markdown\n"
-    markdown_table += f"**TRADE PLAYBOOK — {horizon} DAYS**\n"
+    markdown_table = "**TRADE PLAYBOOK — 45 DAYS**\n"
     markdown_table += tabulate(table, headers=headers, tablefmt="github")
-    markdown_table += "\n```"
 
     return markdown_table
 
@@ -3750,6 +3784,12 @@ def format_outputs(all_signals, ml_model):
     print("  - Neutral(40-60): Balanced market sentiment")
     print("  - Greed(61-75): Greed, potential SELL signals")
     print("  - Greed(76-100): Extreme greed, contrarian SELL opportunity")
+    
+    print("\n**FNG Trigger Values:**")
+    print("Trigger values: Fear(-1), Neutral(0), Greed(+1) based on sentiment ranges")
+    print("  - Fear(-1): Values 0-39 indicate bearish sentiment")
+    print("  - Neutral(0): Values 40-60 indicate balanced sentiment") 
+    print("  - Greed(+1): Values 61-100 indicate bullish sentiment")
     print("  - Trigger values: Fear(-1), Neutral(0), Greed(+1) based on sentiment ranges")
     print("  - In TRADE PLAYBOOK: Fear(0) = extreme fear signal, Greed(75) = greed signal")
     print("  - Values 0-24: Extreme fear (contrarian BUY), 25-39: Fear (BUY signals)")
@@ -4303,7 +4343,7 @@ def label_fng(val: int) -> str:
 def create_if_then_logic_complete(stock_name, horizon, direction, signal, accuracy,
                                  shap_features, indicators, sharpe, current_price,
                                  bl20, bh20, feature_presence):
-    """Create IF/THEN logic with complete feature information in markdown format"""
+    """Create IF/THEN logic with complete feature information"""
 
     if_conditions = []
 
@@ -4313,8 +4353,8 @@ def create_if_then_logic_complete(stock_name, horizon, direction, signal, accura
         shap_val = feat['shap_value']
         actual_val = feat.get('actual_value', 0)
         feat_type = feat.get('feature_type', 'unknown')
-
         type_label = feat_type[0].upper()
+
         if feat_type == 'proprietary' and feat_name in ['VIX', 'FNG', 'RSI', 'Momentum125']:
             if feat_name == 'VIX':
                 condition = f"{feat_name}={actual_val:.0f}"
@@ -4325,32 +4365,25 @@ def create_if_then_logic_complete(stock_name, horizon, direction, signal, accura
             else:
                 condition = f"{feat_name}={actual_val:.1f}"
         else:
-            condition = f"{feat_name[:15]}={display_value(actual_val)}"
+            condition = f"{feat_name[:15]}={actual_val:.2f}"
 
         feature_conditions.append(f"[{type_label}]{condition}({shap_val:+.2f})")
 
     if feature_conditions:
         if_conditions.append("Features: " + ", ".join(feature_conditions))
 
-    critical_combos = []
     vix = indicators.get('VIX', 20)
     fng = indicators.get('FNG', 50)
     rsi = indicators.get('RSI', 50)
     momentum = indicators.get('Momentum125', 0)
-    volatility = indicators.get('AnnVolatility', 30)
 
-    if vix > 30:
-        if rsi > 70:
-            critical_combos.append("VIX>30 & RSI>70")
-        elif momentum < -20:
-            critical_combos.append("VIX>30 & Mom<-20%")
-    elif vix < 15 and momentum > 20:
-        critical_combos.append("VIX<15 & Mom>20%")
-
+    critical_combos = []
+    if vix > 30 and rsi > 70:
+        critical_combos.append("VIX>30 & RSI>70")
     if fng < 25 and rsi < 30:
         critical_combos.append(f"Fear({fng}) & RSI<30")
-    elif fng > 75 and rsi > 70:
-        critical_combos.append(f"Greed({fng}) & RSI>70")
+    if vix < 15 and momentum > 20:
+        critical_combos.append("VIX<15 & Mom>20%")
 
     if critical_combos:
         if_conditions.append("Combos: " + " | ".join(critical_combos))
@@ -4370,7 +4403,7 @@ def create_if_then_logic_complete(stock_name, horizon, direction, signal, accura
     else:
         confidence_text = f"{accuracy:.0f}% low confidence"
 
-    logic = f"```markdown\n{stock_name} ({horizon}d) {'↑' if direction == 'Up' else '↓'}\n"
+    logic = f"{stock_name} ({horizon}d) {'↑' if direction == 'Up' else '↓'}\n"
     logic += f"IF {if_part}\n"
     logic += f"THEN {signal} ({confidence_text}).\n"
 
@@ -4387,7 +4420,6 @@ def create_if_then_logic_complete(stock_name, horizon, direction, signal, accura
     else:
         logic += "Limited feature diversity. ⚠️\n"
 
-    logic += "```"
     return logic
 
 # Run main if executed directly

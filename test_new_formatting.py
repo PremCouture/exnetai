@@ -25,7 +25,7 @@ def test_new_formatting():
     }
     
     print("Testing format_trade_playbook_table with sample data:")
-    formatted_table = co.format_trade_playbook_table([sample], 30)
+    formatted_table = co.format_trade_playbook_table([sample])
     print(formatted_table)
     
     print("\n" + "="*60)
