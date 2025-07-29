@@ -3751,6 +3751,10 @@ def format_outputs(all_signals, ml_model):
     print("  - Greed(61-75): Greed, potential SELL signals")
     print("  - Greed(76-100): Extreme greed, contrarian SELL opportunity")
     print("  - Trigger values: Fear(-1), Neutral(0), Greed(+1) based on sentiment ranges")
+    print("  - In TRADE PLAYBOOK: Fear(0) = extreme fear signal, Greed(75) = greed signal")
+    print("  - Values 0-24: Extreme fear (contrarian BUY), 25-39: Fear (BUY signals)")
+    print("  - Values 40-60: Neutral sentiment, 61-75: Greed (SELL signals)")
+    print("  - Values 76-100: Extreme greed (contrarian SELL opportunity)")
     print("RSI: <30 = Oversold, 30-70 = Normal, >70 = Overbought")
     print("Momentum125: 🔴 <-10%  ⚪ -10% to 10%  🟡 10-20%  🟢 >20%")
     print("AnnVolatility: 🟢 <20%  🟡 20-40%  🔴 >40%")
@@ -4304,7 +4308,6 @@ def create_if_then_logic_complete(stock_name, horizon, direction, signal, accura
         if_conditions.append("Features: " + ", ".join(feature_conditions))
 
     # Add critical combinations
-    critical_combos = []
     vix = indicators.get('VIX', 20)
     fng = indicators.get('FNG', 50)
     rsi = indicators.get('RSI', 50)
