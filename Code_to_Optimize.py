@@ -3176,24 +3176,26 @@ def create_trade_playbook_table(df, horizon):
         # Extract direction from signal
         direction = "up" if row['Signal'] in ['BUY', 'STRONG BUY'] else "down"
         
-        # Create TRIGGERS from key indicators
-        triggers = []
-        vix_val = row.get('VIX', 0)
-        fng_val = row.get('FNG', 50)
-        rsi_val = row.get('RSI', 50)
+        triggers_parts = []
+        if row.get('VIX', 0) > 0:
+            triggers_parts.append(f"VIX({row['VIX']:.0f})")
+        if row.get('FNG', 0) > 0:
+            fng_val = row['FNG']
+            if fng_val < 25:
+                triggers_parts.append(f"Fear({fng_val:.0f})")
+            elif fng_val > 75:
+                triggers_parts.append(f"Greed({fng_val:.0f})")
+        if row.get('RSI', 0) > 0:
+            triggers_parts.append(f"RSI({row['RSI']:.0f})")
+        triggers_str = " | ".join(triggers_parts) if triggers_parts else ""
         
-        if vix_val > 30:
-            triggers.append(f"VIX>{vix_val:.0f}")
-        if fng_val < 25:
-            triggers.append(f"Fear({fng_val:.0f})")
-        elif fng_val > 75:
-            triggers.append(f"Greed({fng_val:.0f})")
-        if rsi_val < 30:
-            triggers.append("RSI<30")
-        elif rsi_val > 70:
-            triggers.append("RSI>70")
-        
-        triggers_str = " | ".join(triggers) if triggers else "Standard"
+        accuracy = row['Accuracy']
+        if accuracy >= 75:
+            guide = "High confidence signal ✅✅"
+        elif accuracy >= 65:
+            guide = "Moderate confidence signal ✅"
+        else:
+            guide = "Low confidence signal ⚠️"
         
         shap_features = []
         shap_text = row.get('SHAP', '')
@@ -3227,18 +3229,6 @@ def create_trade_playbook_table(df, horizon):
                         })
                     except:
                         pass
-        
-        # Create GUIDE from IF/THEN logic
-        if_then = row.get('IF_THEN', '')
-        if if_then and len(if_then) > 50:
-            if "high confidence" in if_then.lower():
-                guide = "High confidence signal ✅✅"
-            elif "moderate confidence" in if_then.lower():
-                guide = "Moderate confidence ✅"
-            else:
-                guide = "Standard signal"
-        else:
-            guide = "Standard signal"
         
         signal_data.append({
             "ticker": row['Stock'],
@@ -3760,6 +3750,7 @@ def format_outputs(all_signals, ml_model):
     print("  - Neutral(40-60): Balanced market sentiment")
     print("  - Greed(61-75): Greed, potential SELL signals")
     print("  - Greed(76-100): Extreme greed, contrarian SELL opportunity")
+    print("  - Trigger values: Fear(-1), Neutral(0), Greed(+1) based on sentiment ranges")
     print("RSI: <30 = Oversold, 30-70 = Normal, >70 = Overbought")
     print("Momentum125: 🔴 <-10%  ⚪ -10% to 10%  🟡 10-20%  🟢 >20%")
     print("AnnVolatility: 🟢 <20%  🟡 20-40%  🔴 >40%")
@@ -3818,7 +3809,7 @@ def format_outputs(all_signals, ml_model):
     print("\n**Short Bias Factors:**")
     print("Death Cross: 50-day MA < 200-day MA")
     print("VIX>30: High market fear (when VIX is available)")
-    print("FNG<0.25: Extreme fear in market (when FNG is available)")
+    print("FNG: See detailed Fear & Greed Index explanation above")
     print("News<-0.5: Very negative news sentiment (when News is available)")
     print("CallPut<0.7: Heavy put buying (when Call/Put is available)")
     print("Financial Stress>2: Banking/credit stress")
