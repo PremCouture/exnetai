@@ -3139,43 +3139,7 @@ def format_trade_playbook_table(signal_data: list, horizon: int = 30) -> str:
         dd_icon = "🟢" if dd > -10 else "🟡" if dd > -30 else "🔴"
         dd_str = f"{dd_icon}{dd:.1f}%"
 
-        shap_feats = s.get("shap_features", [])[:2]
-        shap_display = []
-        for feat in shap_feats:
-            feature_name = feat.get("feature", "")
-            actual_val = feat.get("actual_value", 0)
-            shap_val = feat.get("shap_value", 0)
-            feature_type = feat.get("feature_type", "technical")
-            
-            if feature_name and actual_val != 0:
-                val = f"{feature_name}={actual_val}"
-            else:
-                val = feature_name or ""
-            
-            # Map feature_type to category abbreviation
-            if feature_type == "macro":
-                cat = "M"
-            elif feature_type == "proprietary":
-                cat = "P"
-            elif feature_type == "technical":
-                cat = "T"
-            elif feature_type == "interaction":
-                cat = "I"
-            elif feature_type == "regime":
-                cat = "R"
-            else:
-                cat = "T"
-            
-            # Add emoji based on SHAP value
-            if shap_val > 0:
-                emoji = "🟢"
-            elif shap_val < 0:
-                emoji = "🔴"
-            else:
-                emoji = "⚪"
-            
-            shap_display.append(f"{emoji} [{cat}] {val} ({shap_val:+.3f})")
-        shap_str = " | ".join(shap_display)
+        shap_str = s.get("SHAP", "N/A")
 
         guide_str = guide_label(s.get("guide", ""))
         
@@ -3303,20 +3267,18 @@ def load_data():
         all_csv_files = [f for f in os.listdir(CONFIG['STOCK_DATA_PATH'])
                         if f.endswith('.csv') and not f.endswith('.gsheet.csv')]
 
-    # Get tickers for ONLY 5 CSV files
+    # Get tickers for CSV files - handle both ticker names and numeric IDs
     all_tickers = []
-    for filename in all_csv_files[:CONFIG['MAX_STOCKS']]:  # Process only 5 stocks
+    for filename in all_csv_files[:CONFIG['MAX_STOCKS']]:  # Process up to MAX_STOCKS
         stock_id = filename.replace('.csv', '')
-        if stock_id in STOCK_ID_TO_NAME:
+        
+        if stock_id in STOCK_ALTERNATIVE_NAMES:
+            ticker = stock_id
+        elif stock_id in STOCK_ID_TO_NAME:
             ticker = STOCK_ID_TO_NAME[stock_id]
         else:
-            ticker = None
-            for tick, ids in STOCK_ALTERNATIVE_NAMES.items():
-                if stock_id == tick:
-                    ticker = tick
-                    break
-            if not ticker:
-                ticker = stock_id
+            ticker = stock_id
+        
         all_tickers.append(ticker)
 
 
