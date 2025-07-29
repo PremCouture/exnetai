@@ -61,8 +61,8 @@ logger = logging.getLogger(__name__)
 
 CONFIG = {
     # Paths
-    'STOCK_DATA_PATH': '/content/drive/MyDrive/csv_files/stock_csvs/data',
-    'FRED_ROOT_PATH': '/content/drive/MyDrive/csv_files/stock_csvs',
+    'STOCK_DATA_PATH': './data',
+    'FRED_ROOT_PATH': './fred_data',
 
     # Analysis parameters
     'HORIZONS': [30, 45, 60],  # Prediction horizons in days
@@ -299,13 +299,11 @@ def load_all_stock_and_fred_data_enhanced(stock_path, fred_root, use_cache=True)
                     stock_name = get_stock_name_from_id(file_id)
                     key = stock_name if stock_name else file_id
                     stock_data[key] = df
-                    logger.info(f"✅ [Stock] {file} → {key} ({df.shape[0]} rows)")
                 except Exception as e:
-                    logger.warning(f"❌ Failed to load {file}: {e}")
+                    pass
     else:
-        logger.warning(f"⚠️ Stock path does not exist: {stock_path}")
+        pass
 
-    logger.info(f"🔍 Loading FRED indicators from: {fred_root}")
     if os.path.exists(fred_root):
         for folder in sorted(os.listdir(fred_root)):
             folder_path = os.path.join(fred_root, folder)
@@ -340,19 +338,12 @@ def load_all_stock_and_fred_data_enhanced(stock_path, fred_root, use_cache=True)
                     
                     if len(standardized_df) > 0:
                         fred_data[readable_name] = standardized_df
-                        logger.info(f"✅ [FRED] {folder}/{csv_files[0]} → {readable_name} ({standardized_df.shape[0]} rows)")
-                    else:
-                        logger.warning(f"⚠️ No valid data in {folder}/{csv_files[0]}")
-                else:
-                    logger.warning(f"⚠️ Insufficient columns in {folder}/{csv_files[0]}")
                     
             except Exception as e:
-                logger.warning(f"❌ Failed to load FRED file in {folder}: {e}")
+                pass
     else:
-        logger.warning(f"⚠️ FRED root path does not exist: {fred_root}")
+        pass
 
-    logger.info(f"📊 Loaded {len(stock_data)} stock datasets")
-    logger.info(f"📊 Loaded {len(fred_data)} FRED indicators")
     
     result = (stock_data, fred_data)
     
@@ -839,15 +830,9 @@ def load_stock_data(ticker, csv_path=None, use_cache=True):
             if 'Date' in df.columns:
                 df = df.sort_values('Date')
 
-                # Data sanity check
-                logger.info(f"{ticker} - Date range: {df['Date'].min()} to {df['Date'].max()}")
-                logger.info(f"{ticker} - Total rows: {len(df)}")
-                logger.info(f"{ticker} - Proprietary features found: {[k for k,v in found_features.items() if v]}")
-                logger.info(f"{ticker} - Missing proprietary features: {[k for k,v in found_features.items() if not v]}")
 
             return df
         else:
-            logger.warning(f"No data file found for {ticker}")
             return None
 
     except Exception as e:
@@ -865,18 +850,13 @@ def load_all_stock_data(tickers, csv_path=None, use_cache=True):
     """Load stock data for multiple tickers with validation and batch processing"""
     stock_data = {}
 
-    logger.info(f"Loading {len(tickers)} stocks with caching...")
-
     # Batch process tickers for better I/O efficiency
     for ticker in tickers:
         df = load_stock_data(ticker, csv_path, use_cache=use_cache)
         if df is not None and len(df) >= CONFIG['MIN_SAMPLES_PER_TICKER']:
             stock_data[ticker] = df
-            logger.info(f"Loaded {ticker} ({len(df)} rows)")
         elif df is not None:
-            logger.warning(f"Skipped {ticker} - insufficient data ({len(df)} rows, need {CONFIG['MIN_SAMPLES_PER_TICKER']})")
-
-    logger.info(f"Successfully loaded {len(stock_data)} stocks")
+            pass
     return stock_data
 
 def load_fred_data_from_folders(use_cache=True):
@@ -890,10 +870,7 @@ def load_fred_data_from_folders(use_cache=True):
             return DATA_CACHE[cache_key].copy()
 
     if not os.path.exists(CONFIG['FRED_ROOT_PATH']):
-        logger.warning(f"FRED path not found: {CONFIG['FRED_ROOT_PATH']}")
         return fred_data
-
-    logger.info("Loading FRED indicators...")
 
     fred_patterns = list(FRED_METADATA.keys()) + ['USREC', 'AMERIBOR', 'PCEPI', 'MEHOINUSA', 'OPHNFB']
 
@@ -982,8 +959,6 @@ def fix_macro_data_alignment(fred_data):
     """Fix macro data alignment with proper lags to prevent look-ahead bias"""
     aligned_fred = {}
 
-    logger.info("Aligning FRED data with proper lags...")
-
     for indicator_name, fred_df in fred_data.items():
         if fred_df.empty:
             continue
@@ -1050,7 +1025,6 @@ def fix_macro_data_alignment(fred_data):
 
 def merge_macro_with_stock(stock_data, fred_data):
     """Merge macro data with stock data using proper temporal alignment"""
-    logger.info("Merging macro features with stock data...")
 
     all_dates = []
     for ticker, df in stock_data.items():
@@ -1394,7 +1368,6 @@ def create_proprietary_features(df):
             else:
                 features[col] = features[col].fillna(0)
 
-    logger.info(f"Created {len(features.columns)} proprietary features: {list(features.columns)}")
 
     return features
 
@@ -1424,8 +1397,6 @@ def create_regime_features(proprietary_features):
                     (feat_data >= thresholds['low']) &
                     (feat_data <= thresholds['high'])
                 ).astype(int)
-
-    logger.info(f"Created {len(regime_features.columns)} regime features")
 
     return regime_features
 
@@ -1486,8 +1457,6 @@ def create_nonlinear_transformations(features):
     # OPTIMIZATION 3: Vectorized clipping for all columns at once
     if len(transformed_features.columns) > 0:
         transformed_features = transformed_features.clip(-10, 10)
-
-    logger.info(f"Created {len(transformed_features.columns)} non-linear transformations (OPTIMIZED)")
 
     return transformed_features
 
@@ -1609,7 +1578,6 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
     if triple_data:
         triple_df = pd.DataFrame(triple_data, index=macro_features.index)
         interaction_features = pd.concat([interaction_features, triple_df], axis=1)
-        logger.info(f"Created {len(triple_data)} triple interactions (batch processed)")
 
     # OPTIMIZATION 4: Vectorized Proprietary × Proprietary interactions
     prop_interactions = [
@@ -1634,7 +1602,6 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
     # OPTIMIZATION 5: Vectorized normalization
     if len(interaction_features.columns) > 0:
         if interaction_features.columns.duplicated().any():
-            logger.warning(f"Removing {interaction_features.columns.duplicated().sum()} duplicate columns")
             interaction_features = interaction_features.loc[:, ~interaction_features.columns.duplicated()]
         
         # Clip extreme values (vectorized)
@@ -1651,7 +1618,6 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
             interaction_features[valid_cols] = standardized_data.clip(-5, 5)
 
     total_interactions = len(interaction_features.columns)
-    logger.info(f"Created {total_interactions} total interaction features (OPTIMIZED)")
 
     return interaction_features
 
@@ -1820,29 +1786,23 @@ def create_all_features(df, macro_metadata=None, use_cache=True):
 
     # 1. Technical features
     tech_features = create_technical_features(df)
-    logger.info(f"Created {len(tech_features.columns)} technical features")
 
     # 2. Proprietary features - FORCE CREATION OF ALL
     proprietary_features = create_proprietary_features(df)
-    logger.info(f"Created/verified {len(proprietary_features.columns)} proprietary features")
 
     # 3. Macro features
     macro_features = create_macro_features(df, macro_metadata)
-    logger.info(f"Created {len(macro_features.columns)} macro features")
 
     # 4. Regime features
     regime_features = create_regime_features(proprietary_features)
-    logger.info(f"Created {len(regime_features.columns)} regime features")
 
     # 5. Non-linear transformations
     transformed_features = create_nonlinear_transformations(proprietary_features)
-    logger.info(f"Created {len(transformed_features.columns)} non-linear transformations")
 
     # 6. Comprehensive interaction features
     interaction_features = create_comprehensive_interaction_features(
         macro_features, proprietary_features, regime_features
     )
-    logger.info(f"Created {len(interaction_features.columns)} interaction features")
 
     # Combine all features
     all_features = pd.concat([
@@ -1897,16 +1857,14 @@ def create_all_features(df, macro_metadata=None, use_cache=True):
             missing_proprietary.append(feat)
 
     if missing_proprietary:
-        logger.warning(f"Missing proprietary features in final set: {missing_proprietary}")
+        pass
     else:
-        logger.info("✓ All proprietary features successfully included!")
+        pass
 
     # Cache the result for cross-horizon reuse
     if use_cache:
         FEATURE_CACHE[cache_key] = all_features.copy()
-        logger.info(f"Cached features for cross-horizon reuse - total time: {time.time() - start_time:.2f}s")
 
-    logger.info(f"Total features created: {len(all_features.columns)} in {time.time() - start_time:.2f}s")
     return all_features
 
 # ==========================
@@ -2407,9 +2365,7 @@ class EnhancedTradingModel:
                 logger.info(f"  ✓ {feat}: non-zero={non_zero}, unique={unique_vals}, mean={mean_val:.2f}")
             else:
                 prop_features_missing.append(feat)
-                logger.warning(f"  ✗ {feat}: MISSING from features!")
 
-        logger.info(f"\nProprietary features present: {len(prop_features_present)}/{len(CONFIG['PROPRIETARY_FEATURES'])}")
 
         # Categorize all features
         feature_categories = self.categorize_features(X_combined.columns.tolist())
@@ -2536,9 +2492,9 @@ class EnhancedTradingModel:
                     for i, (feat_name, importance, idx) in enumerate(feature_importance_by_type[category][:5], 1):
                         logger.info(f"  {i}. {feat_name}: {importance:.4f}")
                     if not feature_importance_by_type[category]:
-                        logger.warning(f"  ⚠️  NO {category} features in top rankings!")
+                        pass
                 else:
-                    logger.warning(f"  ⚠️  NO {category} features found!")
+                    pass
 
             # Check overall top 2
             logger.info(f"\nOVERALL TOP 2 FEATURES:")
