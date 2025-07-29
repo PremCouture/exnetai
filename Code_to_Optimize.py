@@ -3186,19 +3186,39 @@ def format_trade_playbook_table(signal_data: list, horizon: int = 30) -> str:
         shap_feats = s.get("shap_features", [])[:2]
         shap_display = []
         for feat in shap_feats:
-            val = feat.get("value", "")
-            shap = feat.get("shap", 0)
-            cat = feat.get("category", "T")[0].upper()
+            feature_name = feat.get("feature", "")
+            actual_val = feat.get("actual_value", 0)
+            shap_val = feat.get("shap_value", 0)
+            feature_type = feat.get("feature_type", "technical")
+            
+            if feature_name and actual_val != 0:
+                val = f"{feature_name}={actual_val}"
+            else:
+                val = feature_name or ""
+            
+            # Map feature_type to category abbreviation
+            if feature_type == "macro":
+                cat = "M"
+            elif feature_type == "proprietary":
+                cat = "P"
+            elif feature_type == "technical":
+                cat = "T"
+            elif feature_type == "interaction":
+                cat = "I"
+            elif feature_type == "regime":
+                cat = "R"
+            else:
+                cat = "T"
             
             # Add emoji based on SHAP value
-            if shap > 0:
+            if shap_val > 0:
                 emoji = "🟢"
-            elif shap < 0:
+            elif shap_val < 0:
                 emoji = "🔴"
             else:
                 emoji = "⚪"
             
-            shap_display.append(f"{emoji} [{cat}] {val} ({shap:+.3f})")
+            shap_display.append(f"{emoji} [{cat}] {val} ({shap_val:+.3f})")
         shap_str = " | ".join(shap_display)
 
         guide_str = guide_label(s.get("guide", ""))
@@ -3451,9 +3471,7 @@ def format_outputs(all_signals, ml_model):
         heatmap_prefix = 'feature_presence'
     ml_model.create_feature_presence_heatmap(heatmap_prefix)
 
-    print("\n" + "="*150)
     print("**COMPREHENSIVE TRADING SIGNAL ANALYSIS WITH ALL FEATURES**")
-    print("="*150)
 
     # Display complete results for each horizon
     for horizon in CONFIG['HORIZONS']:
