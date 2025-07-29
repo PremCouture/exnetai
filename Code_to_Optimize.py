@@ -3136,7 +3136,7 @@ def get_performance_indicator(value: float, metric_type: str) -> str:
         return "🟢" if value > -5 else "🟡" if value > -10 else "🔴" if value < -20 else "⚪"
     return ""
 
-def format_trade_playbook_table(signal_data: list) -> str:
+def format_trade_playbook_table(signal_data: list, horizon: int = 30) -> str:
     """
     Format a markdown table for the trade playbook, suitable for Colab, notebooks, or exports.
     Each entry in signal_data should be a dict with keys:
@@ -3186,7 +3186,7 @@ def format_trade_playbook_table(signal_data: list) -> str:
         ]
         table.append(row)
 
-    markdown_table = "**TRADE PLAYBOOK — 45 DAYS**\n"
+    markdown_table = f"**TRADE PLAYBOOK — {horizon} DAYS**\n"
     markdown_table += tabulate(table, headers=headers, tablefmt="github")
 
     return markdown_table
