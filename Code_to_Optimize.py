@@ -1633,6 +1633,10 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
 
     # OPTIMIZATION 5: Vectorized normalization
     if len(interaction_features.columns) > 0:
+        if interaction_features.columns.duplicated().any():
+            logger.warning(f"Removing {interaction_features.columns.duplicated().sum()} duplicate columns")
+            interaction_features = interaction_features.loc[:, ~interaction_features.columns.duplicated()]
+        
         # Clip extreme values (vectorized)
         interaction_features = interaction_features.clip(-1000, 1000)
         
@@ -1643,8 +1647,8 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
         # Only standardize columns with non-zero std
         valid_cols = stds[stds > 0].index
         if len(valid_cols) > 0:
-            interaction_features.loc[:, valid_cols] = (interaction_features[valid_cols] - means[valid_cols]) / stds[valid_cols]
-            interaction_features.loc[:, valid_cols] = interaction_features[valid_cols].clip(-5, 5)
+            standardized_data = (interaction_features[valid_cols] - means[valid_cols]) / stds[valid_cols]
+            interaction_features[valid_cols] = standardized_data.clip(-5, 5)
 
     total_interactions = len(interaction_features.columns)
     logger.info(f"Created {total_interactions} total interaction features (OPTIMIZED)")
