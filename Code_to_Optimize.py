@@ -3759,6 +3759,17 @@ def format_outputs(all_signals, ml_model):
     print("  - Example: Fear(0) = extreme fear signal, Greed(75) = greed signal")
     print("  - TRADE PLAYBOOK displays: Fear(0), Fear(25), Greed(75), Greed(85)")
     print("  - Sentiment mapping: 0-24=Fear(-1), 25-75=Neutral(0), 76-100=Greed(+1)")
+    print("  - Trigger column interpretation:")
+    print("    * Fear(0) = Extreme fear signal (value 0, sentiment -1)")
+    print("    * Fear(25) = Fear signal (value 25, sentiment -1)")
+    print("    * Greed(75) = Greed signal (value 75, sentiment +1)")
+    print("    * Greed(85) = Extreme greed signal (value 85, sentiment +1)")
+    print("  - FNG values explained:")
+    print("    * 0-24: Extreme fear (contrarian BUY opportunity)")
+    print("    * 25-39: Fear (potential BUY signals)")
+    print("    * 40-60: Neutral sentiment")
+    print("    * 61-75: Greed (potential SELL signals)")
+    print("    * 76-100: Extreme greed (contrarian SELL opportunity)")
     print("RSI: <30 = Oversold, 30-70 = Normal, >70 = Overbought")
     print("Momentum125: 🔴 <-10%  ⚪ -10% to 10%  🟡 10-20%  🟢 >20%")
     print("AnnVolatility: 🟢 <20%  🟡 20-40%  🔴 >40%")
@@ -4287,7 +4298,7 @@ def create_if_then_logic_complete(stock_name, horizon, direction, signal, accura
     if_conditions = []
 
     feature_conditions = []
-    for feat in shap_features[:3]:  # Top 3 features
+    for feat in shap_features[:3]:
         feat_name = feat['feature']
         shap_val = feat['shap_value']
         actual_val = feat.get('actual_value', 0)
@@ -4311,7 +4322,6 @@ def create_if_then_logic_complete(stock_name, horizon, direction, signal, accura
     if feature_conditions:
         if_conditions.append("Features: " + ", ".join(feature_conditions))
 
-    # Add critical combinations
     critical_combos = []
     vix = indicators.get('VIX', 20)
     fng = indicators.get('FNG', 50)
