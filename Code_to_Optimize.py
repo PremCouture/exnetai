@@ -3319,9 +3319,6 @@ def analyze_feature_diversity_complete(all_signals, ml_model):
 
 def load_data():
     """Optimized data loading with caching and batch processing"""
-    # Loading stock data with ALL proprietary features
-    
-    # Initialize enhanced_fred_data to None for scope
     enhanced_fred_data = None
     
     # Get all CSV files from directory
@@ -3359,20 +3356,15 @@ def load_data():
         )
         if enhanced_stock_data:
             stock_data = enhanced_stock_data
-            logger.info(f"✅ Enhanced loader found {len(stock_data)} stocks")
-            if enhanced_fred_data:
-                logger.info(f"✅ Enhanced loader found {len(enhanced_fred_data)} FRED indicators")
+            pass
 
     if not stock_data:
         return None, None, None
 
 
     # Load FRED data with caching - use enhanced_fred_data if available
-    # Loading FRED economic indicators
     if enhanced_fred_data:
-        logger.info("Using enhanced FRED data from directory scanning...")
         fred_data_raw = enhanced_fred_data
-        # Using enhanced FRED indicators
     else:
         fred_data_raw = load_fred_data_from_folders(use_cache=True)
 
@@ -3380,7 +3372,6 @@ def load_data():
         aligned_fred_data = {}
     else:
         aligned_fred_data = fix_macro_data_alignment(fred_data_raw)
-        # Created aligned indicators
 
     # Merge data
     merged_stock_data, macro_metadata = merge_macro_with_stock(stock_data, aligned_fred_data)
