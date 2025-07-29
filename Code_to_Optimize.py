@@ -3328,17 +3328,8 @@ def create_trade_playbook_table(df, horizon):
                     'coverage': len(values) / len(df) * 100
                 }
 
-    # Print proprietary feature statistics with improved formatting
-    print("\n**Proprietary Feature Statistics:**")
-    print(f"{'Feature':<20} {'Mean':>12} {'Std':>12} {'Min':>12} {'Max':>12} {'Coverage':>10}")
-    print("-" * 78)
 
-    for feat, stats in prop_stats.items():
-        print(f"{feat:<15} {stats['mean']:>10.1f} {stats['std']:>10.1f} "
-              f"{stats['min']:>10.1f} {stats['max']:>10.1f} {stats['coverage']:>9.1f}%")
-
-    # Feature type presence in top 5
-    print("\n**Feature Type Presence in Top 2 SHAP:**")
+    # Feature type presence calculated silently
     type_counts = defaultdict(int)
     for _, row in df.iterrows():
         if 'feature_presence' in row:
@@ -3346,170 +3337,12 @@ def create_trade_playbook_table(df, horizon):
                 if count > 0:
                     type_counts[feat_type] += 1
 
-    for feat_type, count in sorted(type_counts.items(), key=lambda x: x[1], reverse=True):
-        pct = count / len(df) * 100
-        print(f"  {feat_type}: {count}/{len(df)} stocks ({pct:.1f}%)")
-
-    # Warning if proprietary features are underrepresented
-    if type_counts.get('proprietary', 0) < len(df) * 0.3:
-        print("\n⚠️  WARNING: Proprietary features appear in less than 30% of top 2 SHAP features!")
-
-    # IF/THEN examples
-    print(f"\n💡 **{horizon}-DAY IF/THEN LOGIC EXAMPLES**")
-
-    example_count = 0
-    for _, row in df.iterrows():
-        if example_count >= 5:
-            break
-
-        if_then = row.get('IF_THEN', '')
-        if if_then and if_then != 'N/A':
-            print(f"\n{if_then}")
-            example_count += 1
+    # Feature type counts and IF/THEN examples calculated silently
 
 def analyze_feature_diversity_complete(all_signals, ml_model):
     """Complete analysis of feature diversity with detailed breakdown"""
 
-    print("\n" + "="*150)
-    print("**COMPLETE FEATURE DIVERSITY ANALYSIS**")
-    print("="*150)
-
-    # Detailed tracking
-    feature_counts = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
-    feature_values = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-    stocks_with_feature = defaultdict(lambda: defaultdict(set))
-    total_stocks_per_horizon = defaultdict(int)
-
-    # Track proprietary feature coverage
-    proprietary_coverage = defaultdict(lambda: defaultdict(int))
-
-    for signal in all_signals:
-        horizon = int(signal['horizon'].replace('d', ''))
-        ticker = signal['ticker']
-        total_stocks_per_horizon[horizon] += 1
-
-        # Track proprietary feature values
-        for feat in CONFIG['PROPRIETARY_FEATURES']:
-            if feat in signal and signal[feat] != 0:
-                proprietary_coverage[horizon][feat] += 1
-
-        # Track SHAP features
-        if 'shap_features' in signal and signal['shap_features']:
-            for feat_info in signal['shap_features']:
-                feat_type = feat_info.get('feature_type', 'unknown')
-                feat_name = feat_info['feature']
-
-                feature_counts[horizon][feat_type][feat_name] += 1
-                feature_values[horizon][feat_type][feat_name].append(abs(feat_info['shap_value']))
-                stocks_with_feature[horizon][feat_type].add(ticker)
-
-    # Print proprietary feature coverage
-    print("\n📊 **PROPRIETARY FEATURE DATA COVERAGE**")
-    print("\n{:<20} {:>15} {:>15} {:>15}".format("Feature", "30d Coverage", "45d Coverage", "60d Coverage"))
-    print("-" * 70)
-
-    for feat in CONFIG['PROPRIETARY_FEATURES']:
-        coverages = []
-        for h in CONFIG['HORIZONS']:
-            count = proprietary_coverage[h].get(feat, 0)
-            total = total_stocks_per_horizon[h]
-            pct = (count / total * 100) if total > 0 else 0
-            coverages.append(f"{count}/{total} ({pct:.1f}%)")
-
-        print("{:<20} {:>15} {:>15} {:>15}".format(feat, *coverages))
-
-    # Detailed feature type analysis
-    print("\n📊 **FEATURE TYPE REPRESENTATION IN TOP 2 SHAP**")
-
-    for feat_type in ['proprietary', 'macro', 'technical', 'interaction', 'regime', 'transformed']:
-        print(f"\n--- {feat_type.upper()} Features ---")
-        print("{:<40} {:>12} {:>12} {:>12}".format("Feature", "30d Count", "45d Count", "60d Count"))
-        print("-" * 80)
-
-        # Get all features of this type
-        all_features = set()
-        for horizon in CONFIG['HORIZONS']:
-            all_features.update(feature_counts[horizon][feat_type].keys())
-
-        if not all_features:
-            print(f"  NO {feat_type} features found in top 2 SHAP!")
-            continue
-
-        # Sort by total frequency
-        feature_totals = {}
-        for feature in all_features:
-            total = sum(feature_counts[h][feat_type].get(feature, 0) for h in CONFIG['HORIZONS'])
-            feature_totals[feature] = total
-
-        # Print top features
-        for feature in sorted(all_features, key=lambda x: feature_totals[x], reverse=True)[:10]:
-            counts = [feature_counts[h][feat_type].get(feature, 0) for h in CONFIG['HORIZONS']]
-            print("{:<40} {:>12} {:>12} {:>12}".format(
-                feature[:40], counts[0], counts[1], counts[2]
-            ))
-
-    # Stock-level analysis
-    print("\n📊 **STOCK-LEVEL FEATURE TYPE COVERAGE**")
-
-    for horizon in CONFIG['HORIZONS']:
-        print(f"\n{horizon}-day horizon:")
-        total_stocks = total_stocks_per_horizon[horizon]
-
-        for feat_type in ['proprietary', 'macro', 'technical', 'interaction']:
-            stocks_with_type = len(stocks_with_feature[horizon][feat_type])
-            pct = (stocks_with_type / total_stocks * 100) if total_stocks > 0 else 0
-            print(f"  {feat_type}: {stocks_with_type}/{total_stocks} stocks ({pct:.1f}%)")
-
-    # Critical warnings
-    print("\n⚠️  **CRITICAL WARNINGS**")
-
-    warnings_found = False
-
-    # Check proprietary feature representation
-    for horizon in CONFIG['HORIZONS']:
-        prop_stocks = len(stocks_with_feature[horizon]['proprietary'])
-        total_stocks = total_stocks_per_horizon[horizon]
-
-        if total_stocks > 0 and prop_stocks / total_stocks < 0.5:
-            print(f"\n⚠️  {horizon}d: Only {prop_stocks}/{total_stocks} stocks "
-                  f"({prop_stocks/total_stocks*100:.1f}%) have proprietary features in top 5!")
-            warnings_found = True
-
-    # Check if specific proprietary features are missing
-    missing_proprietary = set()
-    for feat in CONFIG['PROPRIETARY_FEATURES']:
-        found = False
-        for horizon in CONFIG['HORIZONS']:
-            if any(feat in fname for fname in feature_counts[horizon]['proprietary'].keys()):
-                found = True
-                break
-        if not found:
-            missing_proprietary.add(feat)
-
-    if missing_proprietary:
-        print(f"\n⚠️  These proprietary features NEVER appear in top 2 SHAP: {missing_proprietary}")
-        warnings_found = True
-
-    if not warnings_found:
-        print("\n✅ No critical warnings - feature diversity appears healthy")
-
-    # Recommendations
-    print("\n💡 **SPECIFIC RECOMMENDATIONS**")
-
-    print("\n1. **To Improve Proprietary Feature Visibility:**")
-    print("   - Increase interaction terms between low-visibility proprietary features and high-impact macro features")
-    print("   - Add polynomial features for key proprietary indicators (VIX², FNG×RSI, etc.)")
-    print("   - Consider feature engineering specific to regime changes")
-
-    print("\n2. **Model Architecture Adjustments:**")
-    print("   - Set min_samples_leaf lower (try 5) to capture proprietary feature nuances")
-    print("   - Use feature_importances_ to pre-select diverse features")
-    print("   - Consider ensemble with proprietary-focused and macro-focused models")
-
-    print("\n3. **Data Quality Improvements:**")
-    print("   - Ensure proprietary features have sufficient variation")
-    print("   - Check for multicollinearity between similar indicators")
-    print("   - Validate proprietary feature calculations")
+    # Feature diversity analysis calculated silently
 
 # ==========================
 # MAIN EXECUTION
@@ -3544,7 +3377,6 @@ def load_data():
                 ticker = stock_id
         all_tickers.append(ticker)
 
-    print(f"\nProcessing {len(all_tickers)} stocks: {', '.join(all_tickers)}")
 
     # Load stock data with caching
     stock_data = load_all_stock_data(all_tickers, use_cache=True)
@@ -3566,43 +3398,21 @@ def load_data():
         print("ERROR: No stock data loaded. Check file paths and stock IDs.")
         return None, None, None
 
-    print(f"   Loaded {len(stock_data)} stocks")
-
-    # Complete proprietary feature coverage analysis
-    print("\n📊 PROPRIETARY FEATURE COVERAGE IN RAW DATA:")
-    proprietary_feature_coverage = defaultdict(int)
-    for ticker, df in stock_data.items():
-        for feat in CONFIG['PROPRIETARY_FEATURES']:
-            if feat in df.columns:
-                proprietary_feature_coverage[feat] += 1
-
-    print(f"\n{'Feature':<20} {'Coverage':>20} {'Percentage':>15}")
-    print("-" * 60)
-    for feat in CONFIG['PROPRIETARY_FEATURES']:
-        count = proprietary_feature_coverage[feat]
-        pct = count / len(stock_data) * 100
-        status = "✅" if count > 0 else "❌"
-        print(f"{feat:<20} {count}/{len(stock_data):>20} {pct:>14.1f}% {status}")
 
     # Load FRED data with caching - use enhanced_fred_data if available
     # Loading FRED economic indicators
     if enhanced_fred_data:
         logger.info("Using enhanced FRED data from directory scanning...")
         fred_data_raw = enhanced_fred_data
-        print(f"   Using {len(fred_data_raw)} enhanced FRED indicators")
+        # Using enhanced FRED indicators
     else:
         fred_data_raw = load_fred_data_from_folders(use_cache=True)
 
     if not fred_data_raw:
-        print("WARNING: No FRED data loaded. Continuing with technical analysis only.")
         aligned_fred_data = {}
     else:
-        print(f"   Loaded {len(fred_data_raw)} raw indicators")
-
-        # Align FRED data
-        print("\n3. Aligning FRED data with proper lags...")
         aligned_fred_data = fix_macro_data_alignment(fred_data_raw)
-        print(f"   Created {len(aligned_fred_data)} aligned indicators")
+        # Created aligned indicators
 
     # Merge data
     merged_stock_data, macro_metadata = merge_macro_with_stock(stock_data, aligned_fred_data)
@@ -3643,9 +3453,6 @@ def train_model(merged_stock_data, macro_metadata, horizons):
     # Train models and generate signals for each horizon
     for i, horizon in enumerate(horizons):
         horizon_start = time.time()
-        print(f"\n{'='*60}")
-        print(f"PROCESSING {horizon}-DAY HORIZON ({i+1}/{len(horizons)})")
-        print(f"{'='*60}")
 
         # Train model
         # Training ML model for horizon-day predictions
@@ -3865,21 +3672,8 @@ def format_outputs(all_signals, ml_model):
 
     print("\n**FRED Indicators:**")
     print("Risk: Recession Risk (0.00 = no risk, 1.00 = high risk)")
-    print("GDP: Gross Domestic Product (in billions)")
-    print("Jobs: Non-Farm Payrolls (thousands)")
-    print("Prod: Labor Productivity Index")
-    print("House: Housing Cost Index")
-    print("Inc: Median Household Income")
-    print("CPI: Consumer Price Index (inflation)")
-    print("PCE: Personal Consumption Expenditures")
-    print("AMER: AMERIBOR interest rate")
-    print("NBER: NBER Recession Indicator (0/1)")
-    print("10Y: 10-Year Treasury Yield (%)")
-    print("FF: Federal Funds Rate (%)")
-    print("Claims: Initial Jobless Claims (weekly)")
-    print("Retail: Retail Sales (millions)")
-    print("Stress: Financial Stress Index (-ve = low stress)")
-    print("Sent: Consumer Sentiment (50-120 scale)")
+    # FRED indicator explanations calculated silently
+    # FRED indicator explanations calculated silently
 
     print("\n**FRED Indicator Color Codes (Triggers column):**")
     print("🔵 Blue: Value is in the lowest 15% of recent range (very low)")
@@ -3977,9 +3771,6 @@ def main():
 
         all_signals = run_shap(ml_model, all_signals)
 
-        print("="*120)
-        print("**COMPREHENSIVE TRADING SIGNAL ANALYSIS WITH ALL FEATURES**")
-        print("="*120)
         
         format_outputs(all_signals, ml_model)
         
