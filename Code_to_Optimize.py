@@ -4407,7 +4407,7 @@ def create_if_then_logic_complete(stock_name, horizon, direction, signal, accura
     else:
         confidence_text = f"{accuracy:.0f}% low confidence"
 
-    logic = f"{stock_name} ({horizon}d) {'↑' if direction == 'Up' else '↓'}\n"
+    logic = f"```markdown\n{stock_name} ({horizon}d) {'↑' if direction == 'Up' else '↓'}\n"
     logic += f"IF {if_part}\n"
     logic += f"THEN {signal} ({confidence_text}).\n"
 
@@ -4424,6 +4424,7 @@ def create_if_then_logic_complete(stock_name, horizon, direction, signal, accura
     else:
         logic += "Limited feature diversity. ⚠️\n"
 
+    logic += "```"
     return logic
 
 # Run main if executed directly
