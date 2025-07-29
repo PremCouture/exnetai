@@ -3136,6 +3136,25 @@ def get_performance_indicator(value: float, metric_type: str) -> str:
         return "🟢" if value > -5 else "🟡" if value > -10 else "🔴" if value < -20 else "⚪"
     return ""
 
+def guide_label(raw_text):
+    """Map guide text to clear emoji labels"""
+    if "strong buy" in raw_text.lower():
+        return "✅ Strong Buy"
+    elif "high confidence" in raw_text.lower():
+        return "✅✅ High confidence signal"
+    elif "moderate confidence" in raw_text.lower():
+        return "✅ Moderate confidence signal"
+    elif "sell caution" in raw_text.lower():
+        return "⚠️ Sell Caution"
+    elif "buy caution" in raw_text.lower():
+        return "⚠️ Buy Caution"
+    elif "cover short" in raw_text.lower():
+        return "🧾 Cover Short"
+    elif "high risk" in raw_text.lower():
+        return "🚫 High Risk"
+    else:
+        return raw_text
+
 def format_trade_playbook_table(signal_data: list, horizon: int = 30) -> str:
     """
     Format a markdown table for the trade playbook, suitable for Colab, notebooks, or exports.
@@ -3170,9 +3189,20 @@ def format_trade_playbook_table(signal_data: list, horizon: int = 30) -> str:
             val = feat.get("value", "")
             shap = feat.get("shap", 0)
             cat = feat.get("category", "T")[0].upper()
-            shap_display.append(f"[{cat}] {val} ({shap:+.3f})")
+            
+            # Add emoji based on SHAP value
+            if shap > 0:
+                emoji = "🟢"
+            elif shap < 0:
+                emoji = "🔴"
+            else:
+                emoji = "⚪"
+            
+            shap_display.append(f"{emoji} [{cat}] {val} ({shap:+.3f})")
         shap_str = " | ".join(shap_display)
 
+        guide_str = guide_label(s.get("guide", ""))
+        
         row = [
             s.get("ticker", ""),
             s.get("signal", ""),
@@ -3182,7 +3212,7 @@ def format_trade_playbook_table(signal_data: list, horizon: int = 30) -> str:
             dd_str,
             s.get("trigger", ""),
             shap_str,
-            s.get("guide", ""),
+            guide_str,
         ]
         table.append(row)
 
@@ -3487,7 +3517,7 @@ def analyze_feature_diversity_complete(all_signals, ml_model):
 
 def load_data():
     """Optimized data loading with caching and batch processing"""
-    print("\n1. Loading stock data with ALL proprietary features...")
+    # Loading stock data with ALL proprietary features
     
     # Initialize enhanced_fred_data to None for scope
     enhanced_fred_data = None
@@ -3555,7 +3585,7 @@ def load_data():
         print(f"{feat:<20} {count}/{len(stock_data):>20} {pct:>14.1f}% {status}")
 
     # Load FRED data with caching - use enhanced_fred_data if available
-    print("\n2. Loading FRED economic indicators...")
+    # Loading FRED economic indicators
     if enhanced_fred_data:
         logger.info("Using enhanced FRED data from directory scanning...")
         fred_data_raw = enhanced_fred_data
@@ -3575,7 +3605,6 @@ def load_data():
         print(f"   Created {len(aligned_fred_data)} aligned indicators")
 
     # Merge data
-    print("\n4. Merging macro data with stock data...")
     merged_stock_data, macro_metadata = merge_macro_with_stock(stock_data, aligned_fred_data)
 
     return merged_stock_data, macro_metadata, stock_data
@@ -3584,7 +3613,7 @@ def generate_features(merged_stock_data, macro_metadata, use_cache=True):
     """Generate features once and cache for all horizons"""
     import time
     start_time = time.time()
-    print("\nGenerating features with aggressive cross-horizon optimization...")
+    # Generating features with aggressive cross-horizon optimization
     
     features_by_stock = {}
     
@@ -3603,7 +3632,7 @@ def train_model(merged_stock_data, macro_metadata, horizons):
     """Aggressively optimized model training with batch processing"""
     import time
     start_time = time.time()
-    print("\nTraining models with aggressive optimization...")
+    # Training models with aggressive optimization
     
     # Initialize model
     ml_model = EnhancedTradingModel()
@@ -3619,20 +3648,16 @@ def train_model(merged_stock_data, macro_metadata, horizons):
         print(f"{'='*60}")
 
         # Train model
-        print(f"\n5. Training ML model for {horizon}-day predictions...")
+        # Training ML model for horizon-day predictions
         model_start = time.time()
         model = ml_model.train_model(merged_stock_data, macro_metadata, horizon)
-        print(f"   Model training completed in {time.time() - model_start:.2f}s")
 
         if model is None:
-            print(f"ERROR: Model training failed for {horizon}-day horizon")
             continue
 
         # Generate signals
-        print(f"\n6. Generating trading signals for {horizon}-day horizon...")
         signal_start = time.time()
         signals = generate_signals_with_shap(merged_stock_data, ml_model, macro_metadata, horizon)
-        print(f"   Signal generation completed in {time.time() - signal_start:.2f}s")
 
         # Add to all signals
         all_signals.extend(signals)
@@ -3644,18 +3669,16 @@ def train_model(merged_stock_data, macro_metadata, horizons):
         logger.info(f"Completed {horizon}-day horizon in {horizon_time:.2f}s with aggressive memory cleanup")
 
     total_time = time.time() - start_time
-    print(f"\nTotal model training completed in {total_time:.2f}s")
     return ml_model, all_signals
 
 def run_shap(ml_model, all_signals, batch_size=50):
     """Optimized SHAP analysis with batching"""
-    print("\n7. Analyzing complete feature diversity with SHAP optimization...")
+    # Analyzing complete feature diversity with SHAP optimization
     analyze_feature_diversity_complete(all_signals, ml_model)
     return all_signals
 
 def format_outputs(all_signals, ml_model):
     """Optimized output formatting preserving playbook-style output"""
-    print("\n8. Creating feature presence heatmaps...")
     if IN_COLAB:
         heatmap_prefix = '/content/drive/MyDrive/feature_presence'
     else:
