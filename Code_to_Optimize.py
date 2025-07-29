@@ -4308,6 +4308,7 @@ def create_if_then_logic_complete(stock_name, horizon, direction, signal, accura
         if_conditions.append("Features: " + ", ".join(feature_conditions))
 
     # Add critical combinations
+    critical_combos = []
     vix = indicators.get('VIX', 20)
     fng = indicators.get('FNG', 50)
     rsi = indicators.get('RSI', 50)
