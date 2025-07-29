@@ -1643,8 +1643,8 @@ def create_comprehensive_interaction_features(macro_features, proprietary_featur
         # Only standardize columns with non-zero std
         valid_cols = stds[stds > 0].index
         if len(valid_cols) > 0:
-            interaction_features[valid_cols] = (interaction_features[valid_cols] - means[valid_cols]) / stds[valid_cols]
-            interaction_features[valid_cols] = interaction_features[valid_cols].clip(-5, 5)
+            interaction_features.loc[:, valid_cols] = (interaction_features[valid_cols] - means[valid_cols]) / stds[valid_cols]
+            interaction_features.loc[:, valid_cols] = interaction_features[valid_cols].clip(-5, 5)
 
     total_interactions = len(interaction_features.columns)
     logger.info(f"Created {total_interactions} total interaction features (OPTIMIZED)")
