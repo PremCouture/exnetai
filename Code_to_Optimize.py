@@ -4274,7 +4274,7 @@ def label_fng(val: int) -> str:
 def create_if_then_logic_complete(stock_name, horizon, direction, signal, accuracy,
                                  shap_features, indicators, sharpe, current_price,
                                  bl20, bh20, feature_presence):
-    """Create IF/THEN logic with complete feature information"""
+    """Create IF/THEN logic with complete feature information in markdown format"""
 
     if_conditions = []
 
