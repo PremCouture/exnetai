@@ -3263,38 +3263,9 @@ def create_trade_playbook_table(df, horizon):
         else:
             guide = "Low confidence signal ⚠️"
         
-        shap_features = []
-        shap_text = row.get('SHAP', '')
-        if shap_text and shap_text != 'N/A':
-            parts = shap_text.split(' | ')
-            for part in parts[:2]:  # Top 2
-                if '[' in part and ']' in part:
-                    try:
-                        cat_part = part.split(']')[0] + ']'
-                        value_part = part.split(']')[1].strip()
-                        
-                        # Extract category
-                        category = "macro" if "[M]" in cat_part else "proprietary" if "[P]" in cat_part else "technical"
-                        
-                        # Extract SHAP value
-                        if '(' in value_part and ')' in value_part:
-                            shap_val_str = value_part.split('(')[1].split(')')[0]
-                            shap_val = float(shap_val_str.replace('↑', '').replace('↓', '').replace('+', ''))
-                            if '↓' in shap_val_str or '-' in shap_val_str:
-                                shap_val = -abs(shap_val)
-                        else:
-                            shap_val = 0.0
-                        
-                        # Extract value
-                        value = value_part.split('(')[0].strip()
-                        
-                        shap_features.append({
-                            "value": value,
-                            "shap": shap_val,
-                            "category": category
-                        })
-                    except:
-                        pass
+        shap_features = row.get('shap_features', [])
+        if not shap_features:
+            shap_features = []
         
         signal_data.append({
             "ticker": row['Stock'],
