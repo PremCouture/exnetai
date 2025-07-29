@@ -3233,8 +3233,6 @@ def create_trade_playbook_table(df, horizon):
     sell_signals = len(df[df['Signal'].isin(['SELL', 'STRONG SELL'])])
     total_signals = len(df)
     
-    print(f"\n**TRADE PLAYBOOK --- {horizon} DAYS**")
-    print(f"*Showing {total_signals} signals ({buy_signals} BUY, {sell_signals} SELL)*")
     
     # Convert DataFrame to signal_data format for new table function
     signal_data = []
@@ -3395,7 +3393,6 @@ def load_data():
                 logger.info(f"✅ Enhanced loader found {len(enhanced_fred_data)} FRED indicators")
 
     if not stock_data:
-        print("ERROR: No stock data loaded. Check file paths and stock IDs.")
         return None, None, None
 
 
@@ -3435,7 +3432,7 @@ def generate_features(merged_stock_data, macro_metadata, use_cache=True):
         logger.info(f"Generated features for {ticker} in {time.time() - ticker_start:.2f}s (will reuse across horizons)")
         
     total_time = time.time() - start_time
-    print(f"Generated features for {len(features_by_stock)} stocks in {total_time:.2f}s (cross-horizon cached)")
+    # Feature generation completed silently
     return features_by_stock
 
 def train_model(merged_stock_data, macro_metadata, horizons):
@@ -3503,73 +3500,7 @@ def format_outputs(all_signals, ml_model):
             df_horizon = pd.DataFrame(horizon_signals)
             create_trade_playbook_table(df_horizon, horizon)
 
-    # Executive Summary
-    print("\n" + "="*150)
-    print("📊 **EXECUTIVE SUMMARY - COMPLETE ANALYSIS**")
-    print("="*150)
-    print(f"Analysis Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    print(f"Total Stocks Analyzed: {len(set([s['Stock'] for s in all_signals]))}")
-    print(f"Total Signals Generated: {len(all_signals)}")
-
-    # Filter strong signals
-    strong_signals = [s for s in all_signals
-                     if s['Accuracy'] >= 60 and s['Signal'] in ['BUY', 'STRONG BUY', 'SELL', 'STRONG SELL']]
-
-    if strong_signals:
-        print(f"\n📊 Strong Signals Summary:")
-        print(f"- Total Strong Signals: {len(strong_signals)}")
-
-        # Signals with proprietary features in top 5
-        prop_signals = [s for s in strong_signals
-                       if s.get('feature_presence', {}).get('proprietary', 0) > 0]
-        print(f"- Signals with Proprietary Features in Top 5: {len(prop_signals)} "
-              f"({len(prop_signals)/len(strong_signals)*100:.1f}%)")
-
-        # Top opportunities
-        buy_signals = [s for s in strong_signals if s['Signal'] in ['BUY', 'STRONG BUY']]
-        sell_signals = [s for s in strong_signals if s['Signal'] in ['SELL', 'STRONG SELL']]
-
-        if buy_signals:
-            print("\n📈 **TOP BUY OPPORTUNITIES (sorted by VIX/Momentum combo):**")
-
-            buy_df = pd.DataFrame(buy_signals)
-            buy_df['combo_score'] = buy_df['Momentum125'] - buy_df['VIX'] + buy_df['FNG']/2
-            top_buys = buy_df.nlargest(min(10, len(buy_df)), 'combo_score')
-
-            print("\n{:<8} {:<8} {:<6} {:<7} {:<4} {:<4} {:<4} {:<7} {:<8} {:<15}".format(
-                "Stock", "Horizon", "Acc%", "Sharpe", "VIX", "FNG", "RSI", "Mom125%", "AnnVol%", "Signal"
-            ))
-            print("-" * 100)
-
-            for idx in top_buys.index:
-                signal = top_buys.loc[idx]
-                signal_type = "Strong Buy" if "STRONG" in signal['Signal'] else "Buy"
-                print(f"{signal['Stock']:<8} {signal['horizon']:<8} {signal['Accuracy']:>5.1f} "
-                      f"{signal['Sharpe']:>7.2f} {display_value(signal['VIX']):>4} "
-                      f"{display_value(signal['FNG']):>4} {display_value(signal['RSI']):>4} "
-                      f"{display_value(signal['Momentum125']):>7} "
-                      f"{display_value(signal['AnnVolatility']):>8} {signal_type:<15}")
-
-        if sell_signals:
-            print("\n📉 **TOP SELL OPPORTUNITIES (sorted by VIX/Risk combo):**")
-
-            sell_df = pd.DataFrame(sell_signals)
-            sell_df['risk_score'] = sell_df['VIX'] + (100 - sell_df['FNG']) + sell_df['RSI']
-            top_sells = sell_df.nlargest(min(10, len(sell_df)), 'risk_score')
-
-            print("\n{:<8} {:<8} {:<6} {:<7} {:<4} {:<4} {:<4} {:<7} {:<8} {:<15}".format(
-                "Stock", "Horizon", "Acc%", "Sharpe", "VIX", "FNG", "RSI", "Mom125%", "AnnVol%", "Signal"
-            ))
-            print("-" * 100)
-
-            for idx in top_sells.index:
-                signal = top_sells.loc[idx]
-                signal_type = "Strong Sell" if "STRONG" in signal['Signal'] else "Sell"
-                print(f"{signal['Stock']:<8} {signal['horizon']:<8} {signal['Accuracy']:>5.1f} "
-                      f"{signal['Sharpe']:>7.2f} {display_value(signal['VIX']):>4} "
-                      f"{display_value(signal['FNG']):>4} {display_value(signal['RSI']):>4} "
-                      f"{display_value(signal['Momentum125']):>7} "
-                      f"{display_value(signal['AnnVolatility']):>8} {signal_type:<15}")
+    # Executive summary calculated silently
 
     # Save results
     if IN_COLAB:
@@ -3579,58 +3510,14 @@ def format_outputs(all_signals, ml_model):
 
     save_complete_analysis_results(all_signals, ml_model, output_prefix)
 
-    # Final summary
-    print("\n" + "="*60)
-    print("ANALYSIS COMPLETE")
+    # Final summary calculated silently
     total_signals = len(all_signals)
     buy_signals = len([s for s in all_signals if s['Signal'] in ['BUY', 'STRONG BUY']])
     sell_signals = len([s for s in all_signals if s['Signal'] in ['SELL', 'STRONG SELL']])
     unique_stocks = len(set([s['Stock'] for s in all_signals]))
-    print(f"Total Signals: {total_signals} ({buy_signals} BUY, {sell_signals} SELL)")
-    print(f"From {unique_stocks} unique stocks")
-    print("RESULTS ARE FILTERED TO SHOW ONLY THOSE STOCKS THAT HAVE ACCURATE ENOUGH SIGNALS")
-    print("="*60)
+    # Signal summary calculated silently
 
-    # Print complete legend
-    print("\n" + "="*60)
-    print("📚 **COMPLETE LEGEND AND EXPLANATIONS**")
-    print("="*60)
-
-    print("\n**Signal Types:**")
-    print("📈 = Buy/Up  📉 = Sell/Down")
-    print("STRONG BUY/SELL = High confidence signal with multiple confirmations")
-    print("BUY/SELL = Standard signal meeting criteria")
-    print("NEUTRAL = Insufficient confidence or conflicting signals")
-
-    print("\n**Performance Indicators:**")
-    print("🟢 = Good  🟡 = Moderate  🔴 = Poor  ⚪ = Neutral")
-
-    print("\n**Metric Thresholds:**")
-    print("Accuracy: 🟢 ≥65%  🟡 55-65%  🔴 <55%")
-    print("Sharpe: 🟢 ≥1.0  🟡 0.5-1.0  🔴 <0.5")
-    print("CAGR: 🟢 ≥20%  🟡 10-20%  🔴 <10%")
-
-    print("\n**Proprietary Indicators:**")
-    print("VIX: 🟢 <15  🟡 15-30  🔴 >30 (Market volatility)")
-    print("FNG: Fear & Greed Index (0-100 scale)")
-    print("  - Fear(0-24): Extreme fear, contrarian BUY opportunity")
-    print("  - Fear(25-39): Fear, potential BUY signals")  
-    print("  - Neutral(40-60): Balanced market sentiment")
-    print("  - Greed(61-75): Greed, potential SELL signals")
-    print("  - Greed(76-100): Extreme greed, contrarian SELL opportunity")
-    
-    print("\n**FNG Trigger Values:**")
-    print("Trigger values: Fear(-1), Neutral(0), Greed(+1) based on sentiment ranges")
-    print("  - Fear(-1): Values 0-39 indicate bearish sentiment")
-    print("  - Neutral(0): Values 40-60 indicate balanced sentiment") 
-    print("  - Greed(+1): Values 61-100 indicate bullish sentiment")
-    print("  - Trigger values: Fear(-1), Neutral(0), Greed(+1) based on sentiment ranges")
-    print("  - In TRADE PLAYBOOK: Fear(0) = extreme fear signal, Greed(75) = greed signal")
-    print("  - Values 0-24: Extreme fear (contrarian BUY), 25-39: Fear (BUY signals)")
-    print("  - Values 40-60: Neutral sentiment, 61-75: Greed (SELL signals)")
-    print("  - Values 76-100: Extreme greed (contrarian SELL opportunity)")
-    print("  - Trigger representation: Fear(-1), Neutral(0), Greed(+1)")
-    print("  - Example: Fear(0) = extreme fear signal, Greed(75) = greed signal")
+    # Complete legend and explanations calculated silently
     print("  - TRADE PLAYBOOK displays: Fear(0), Fear(25), Greed(75), Greed(85)")
     print("  - Sentiment mapping: 0-24=Fear(-1), 25-75=Neutral(0), 76-100=Greed(+1)")
     print("  - Trigger column interpretation:")
