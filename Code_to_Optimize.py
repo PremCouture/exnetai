@@ -33,6 +33,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import rankdata
 import time
 import gc
+from tabulate import tabulate
 
 # Global caches for optimization
 DATA_CACHE = {}
@@ -3092,6 +3093,66 @@ def get_performance_indicator(value: float, metric_type: str) -> str:
         return "🟢" if value > -5 else "🟡" if value > -10 else "🔴" if value < -20 else "⚪"
     return ""
 
+def format_trade_playbook_table(signal_data: list, horizon: int) -> str:
+    """
+    Format a markdown table for the trade playbook, suitable for Colab, notebooks, or exports.
+    Each entry in signal_data should be a dict with keys:
+    'ticker', 'signal', 'direction', 'accuracy', 'sharpe', 'drawdown', 'trigger', 'shap_features', 'guide'
+    """
+    headers = ["STOCK", "SIGNAL", "DIR.", "ACC.", "SHARPE", "DRAW", "TRIGGERS", "SHAP (TOP 2)", "GUIDE"]
+    table = []
+
+    for s in signal_data:
+        # Direction symbol
+        dir_symbol = "↑" if s.get("direction", "").lower() == "up" else "↓"
+
+        acc = s.get("accuracy", 0)
+        if acc >= 90:
+            acc_str = f"🟢{acc:.1f}%"
+        elif acc >= 75:
+            acc_str = f"🟡{acc:.1f}%"
+        else:
+            acc_str = f"🔴{acc:.1f}%"
+
+        sharpe = s.get("sharpe", 0)
+        sharpe_str = f"{sharpe:.2f}"
+        sharpe_icon = "🟢" if sharpe > 2 else "🟡" if sharpe > 1 else "🔴"
+        sharpe_str = f"{sharpe_icon}{sharpe_str}"
+
+        dd = s.get("drawdown", 0)
+        dd_str = f"{dd:.1f}%"
+        dd_icon = "🟢" if dd > -10 else "🟡" if dd > -30 else "🔴"
+        dd_str = f"{dd_icon}{dd_str}"
+
+        shap_feats = s.get("shap_features", [])[:2]
+        shap_display = []
+        for feat in shap_feats:
+            val = feat.get("value", "")
+            shap = feat.get("shap", 0)
+            cat = feat.get("category", "T")[0].upper()
+            shap_display.append(f"[{cat}] {val} ({shap:+.3f})")
+        shap_str = " | ".join(shap_display)
+
+        row = [
+            s.get("ticker", ""),
+            s.get("signal", ""),
+            dir_symbol,
+            acc_str,
+            sharpe_str,
+            dd_str,
+            s.get("trigger", ""),
+            shap_str,
+            s.get("guide", ""),
+        ]
+        table.append(row)
+
+    markdown_table = "```markdown\n"
+    markdown_table += f"**TRADE PLAYBOOK — {horizon} DAYS**\n"
+    markdown_table += tabulate(table, headers=headers, tablefmt="github")
+    markdown_table += "\n```"
+
+    return markdown_table
+
 def create_trade_playbook_table(df, horizon):
     """Create combined TRADE PLAYBOOK table for production use"""
     if len(df) == 0:
@@ -3106,15 +3167,14 @@ def create_trade_playbook_table(df, horizon):
     
     print(f"\n**TRADE PLAYBOOK --- {horizon} DAYS**")
     print(f"*Showing {total_signals} signals ({buy_signals} BUY, {sell_signals} SELL)*")
-    print("```markdown")
     
-    # Create combined table rows
-    playbook_rows = []
+    # Convert DataFrame to signal_data format for new table function
+    signal_data = []
     for idx in df.index:
         row = df.loc[idx]
         
         # Extract direction from signal
-        direction = "📈" if row['Signal'] in ['BUY', 'STRONG BUY'] else "📉"
+        direction = "up" if row['Signal'] in ['BUY', 'STRONG BUY'] else "down"
         
         # Create TRIGGERS from key indicators
         triggers = []
@@ -3135,6 +3195,39 @@ def create_trade_playbook_table(df, horizon):
         
         triggers_str = " | ".join(triggers) if triggers else "Standard"
         
+        shap_features = []
+        shap_text = row.get('SHAP', '')
+        if shap_text and shap_text != 'N/A':
+            parts = shap_text.split(' | ')
+            for part in parts[:2]:  # Top 2
+                if '[' in part and ']' in part:
+                    try:
+                        cat_part = part.split(']')[0] + ']'
+                        value_part = part.split(']')[1].strip()
+                        
+                        # Extract category
+                        category = "macro" if "[M]" in cat_part else "proprietary" if "[P]" in cat_part else "technical"
+                        
+                        # Extract SHAP value
+                        if '(' in value_part and ')' in value_part:
+                            shap_val_str = value_part.split('(')[1].split(')')[0]
+                            shap_val = float(shap_val_str.replace('↑', '').replace('↓', '').replace('+', ''))
+                            if '↓' in shap_val_str or '-' in shap_val_str:
+                                shap_val = -abs(shap_val)
+                        else:
+                            shap_val = 0.0
+                        
+                        # Extract value
+                        value = value_part.split('(')[0].strip()
+                        
+                        shap_features.append({
+                            "value": value,
+                            "shap": shap_val,
+                            "category": category
+                        })
+                    except:
+                        pass
+        
         # Create GUIDE from IF/THEN logic
         if_then = row.get('IF_THEN', '')
         if if_then and len(if_then) > 50:
@@ -3147,43 +3240,21 @@ def create_trade_playbook_table(df, horizon):
         else:
             guide = "Standard signal"
         
-        # Format accuracy and performance metrics with indicators
-        accuracy_str = f"{get_performance_indicator(row['Accuracy'], 'accuracy')}{row['Accuracy']:.1f}%"
-        sharpe_str = f"{get_performance_indicator(row['Sharpe'], 'sharpe')}{row['Sharpe']:.2f}"
-        drawdown_str = f"{get_performance_indicator(row.get('Drawdown', 0), 'drawdown')}{row.get('Drawdown', 0):.1f}%"
-        
-        playbook_rows.append({
-            "STOCK": row['Stock'],
-            "SIGNAL": row['Signal'],
-            "DIR.": direction,
-            "ACC.": accuracy_str,
-            "SHARPE": sharpe_str,
-            "DRAW": drawdown_str,
-            "TRIGGERS": triggers_str,
-            "SHAP (TOP 2)": row.get('SHAP', 'N/A'),
-            "GUIDE": guide
+        signal_data.append({
+            "ticker": row['Stock'],
+            "signal": row['Signal'],
+            "direction": direction,
+            "accuracy": row['Accuracy'],
+            "sharpe": row['Sharpe'],
+            "drawdown": row.get('Drawdown', 0),
+            "trigger": triggers_str,
+            "shap_features": shap_features,
+            "guide": guide
         })
     
-    # Print table with proper formatting
-    playbook_df = pd.DataFrame(playbook_rows)
-    headers = playbook_df.columns.tolist()
-    
-    # Calculate column widths
-    col_widths = {}
-    for col in headers:
-        col_widths[col] = max(len(str(col)), max(len(str(val)) for val in playbook_df[col]))
-    
-    header_row = " | ".join([str(h).ljust(col_widths[h]) for h in headers])
-    print(header_row)
-    
-    separator_row = " | ".join(["-" * col_widths[h] for h in headers])
-    print(separator_row)
-    
-    for _, row in playbook_df.iterrows():
-        data_row = " | ".join([str(row[col]).ljust(col_widths[col]) for col in headers])
-        print(data_row)
-    
-    print("```")
+    # Use new tabulate-based formatting
+    formatted_table = format_trade_playbook_table(signal_data, horizon)
+    print(formatted_table)
 
     # Calculate statistics for ALL proprietary features
     prop_stats = {}
@@ -3683,7 +3754,12 @@ def format_outputs(all_signals, ml_model):
 
     print("\n**Proprietary Indicators:**")
     print("VIX: 🟢 <15  🟡 15-30  🔴 >30 (Market volatility)")
-    print("FNG: 🔴 <25 (ExFear)  🔴 25-40 (Fear)  ⚪ 40-60 (Neutral)  🟢 60-75 (Greed)  🟢 >75 (ExGreed)")
+    print("FNG: Fear & Greed Index (0-100 scale)")
+    print("  - Fear(0-24): Extreme fear, contrarian BUY opportunity")
+    print("  - Fear(25-39): Fear, potential BUY signals")  
+    print("  - Neutral(40-60): Balanced market sentiment")
+    print("  - Greed(61-75): Greed, potential SELL signals")
+    print("  - Greed(76-100): Extreme greed, contrarian SELL opportunity")
     print("RSI: <30 = Oversold, 30-70 = Normal, >70 = Overbought")
     print("Momentum125: 🔴 <-10%  ⚪ -10% to 10%  🟡 10-20%  🟢 >20%")
     print("AnnVolatility: 🟢 <20%  🟡 20-40%  🔴 >40%")
@@ -3733,7 +3809,7 @@ def format_outputs(all_signals, ml_model):
     print("\n**Technical Indicators:**")
     print("RSI: 30=oversold (BUY), 70=overbought (SELL)")
     print("VIX: >30=high fear (potential SELL), <15=low fear (when available)")
-    print("FNG: <0.3=extreme fear (contrarian BUY), >0.7=extreme greed (SELL) (when available)")
+    print("FNG: See detailed Fear & Greed Index explanation above")
     print("News: <-0.5=very negative, >0.5=very positive (-1 to +1 scale) (when available)")
     print("Call/Put: >1.2=bullish sentiment, <0.8=bearish sentiment (when available)")
     print("MACD: Bullish cross = BUY signal, Bearish cross = SELL signal")
@@ -4209,10 +4285,8 @@ def create_if_then_logic_complete(stock_name, horizon, direction, signal, accura
                                  bl20, bh20, feature_presence):
     """Create IF/THEN logic with complete feature information"""
 
-    # Initialize the logic components
     if_conditions = []
 
-    # Add top SHAP features with their types
     feature_conditions = []
     for feat in shap_features[:3]:  # Top 3 features
         feat_name = feat['feature']
@@ -4220,9 +4294,7 @@ def create_if_then_logic_complete(stock_name, horizon, direction, signal, accura
         actual_val = feat.get('actual_value', 0)
         feat_type = feat.get('feature_type', 'unknown')
 
-        # Format based on feature type
-        type_label = feat_type[0].upper()  # First letter of type
-
+        type_label = feat_type[0].upper()
         if feat_type == 'proprietary' and feat_name in ['VIX', 'FNG', 'RSI', 'Momentum125']:
             if feat_name == 'VIX':
                 condition = f"{feat_name}={actual_val:.0f}"
@@ -4242,41 +4314,34 @@ def create_if_then_logic_complete(stock_name, horizon, direction, signal, accura
 
     # Add critical combinations
     critical_combos = []
-
     vix = indicators.get('VIX', 20)
     fng = indicators.get('FNG', 50)
     rsi = indicators.get('RSI', 50)
     momentum = indicators.get('Momentum125', 0)
     volatility = indicators.get('AnnVolatility', 30)
 
-    # VIX-based combinations
     if vix > 30:
         if rsi > 70:
-            critical_combos.append(f"VIX>{30} & RSI>{70}")
+            critical_combos.append("VIX>30 & RSI>70")
         elif momentum < -20:
-            critical_combos.append(f"VIX>{30} & Mom<-20%")
-    elif vix < 15:
-        if momentum > 20:
-            critical_combos.append(f"VIX<{15} & Mom>{20}%")
+            critical_combos.append("VIX>30 & Mom<-20%")
+    elif vix < 15 and momentum > 20:
+        critical_combos.append("VIX<15 & Mom>20%")
 
-    # FNG-based combinations
     if fng < 25 and rsi < 30:
-        critical_combos.append(f"Fear({fng}) & RSI<{30}")
+        critical_combos.append(f"Fear({fng}) & RSI<30")
     elif fng > 75 and rsi > 70:
-        critical_combos.append(f"Greed({fng}) & RSI>{70}")
+        critical_combos.append(f"Greed({fng}) & RSI>70")
 
     if critical_combos:
         if_conditions.append("Combos: " + " | ".join(critical_combos))
 
-    # Add feature diversity information
     if feature_presence:
         diversity_str = "Types: " + ", ".join([f"{k}({v})" for k, v in feature_presence.items() if v > 0])
         if_conditions.append(diversity_str)
 
-    # Create the IF/THEN statement
     if_part = " AND ".join(if_conditions) if if_conditions else "No significant features"
 
-    # Determine confidence level
     if accuracy >= 70 and len(feature_presence) >= 3:
         confidence_text = f"{accuracy:.0f}% very high confidence (diverse signals)"
     elif accuracy >= 65:
@@ -4286,25 +4351,24 @@ def create_if_then_logic_complete(stock_name, horizon, direction, signal, accura
     else:
         confidence_text = f"{accuracy:.0f}% low confidence"
 
-    # Build the complete logic string
-    logic = f"{stock_name} ({horizon}d) {'↑' if direction == 'Up' else '↓'} "
-    logic += f"IF {if_part} "
-    logic += f"THEN {signal} ({confidence_text}). "
+    logic = f"```markdown\n{stock_name} ({horizon}d) {'↑' if direction == 'Up' else '↓'}\n"
+    logic += f"IF {if_part}\n"
+    logic += f"THEN {signal} ({confidence_text}).\n"
 
-    # Add signal quality indicator
     has_proprietary = feature_presence.get('proprietary', 0) > 0
     has_macro = feature_presence.get('macro', 0) > 0
     has_interaction = feature_presence.get('interaction', 0) > 0
 
     if has_proprietary and (has_macro or has_interaction):
-        logic += "High-quality mixed signal. ✅✅"
+        logic += "High-quality mixed signal. ✅✅\n"
     elif has_proprietary:
-        logic += "Proprietary-driven signal. ✅"
+        logic += "Proprietary-driven signal. ✅\n"
     elif len(feature_presence) >= 3:
-        logic += "Diverse feature signal. ✅"
+        logic += "Diverse feature signal. ✅\n"
     else:
-        logic += "Limited feature diversity. ⚠️"
+        logic += "Limited feature diversity. ⚠️\n"
 
+    logic += "```"
     return logic
 
 # Run main if executed directly
