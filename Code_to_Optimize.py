@@ -3134,6 +3134,8 @@ class EnsembleTradingModel:
         
         if macro_shap is not None:
             macro_feature_cols = self.macro_model.feature_columns[prediction_days]
+            if macro_shap.ndim > 1:
+                macro_shap = macro_shap.flatten()
             weighted_macro_shap = macro_shap * self.ensemble_weights['macro']
             combined_shap_values.extend(weighted_macro_shap)
             combined_feature_names.extend(macro_feature_cols)
@@ -3148,6 +3150,8 @@ class EnsembleTradingModel:
         
         if tech_shap is not None:
             tech_feature_cols = self.technical_models[ticker].feature_columns[model_key]
+            if tech_shap.ndim > 1:
+                tech_shap = tech_shap.flatten()
             weighted_tech_shap = tech_shap * self.ensemble_weights['technical']
             combined_shap_values.extend(weighted_tech_shap)
             combined_feature_names.extend(tech_feature_cols)
@@ -3161,9 +3165,9 @@ class EnsembleTradingModel:
             combined_feature_values.extend(tech_features_aligned.iloc[-1].values)
         
         return {
-            'shap_values': np.array(combined_shap_values),
+            'shap_values': np.array(combined_shap_values).flatten(),
             'feature_names': combined_feature_names,
-            'feature_values': np.array(combined_feature_values)
+            'feature_values': np.array(combined_feature_values).flatten()
         }
     
     def create_feature_presence_heatmap(self, output_path=None):
@@ -3318,8 +3322,17 @@ def generate_signals_with_ensemble(stock_data, ensemble_model, macro_metadata, t
                             for idx in top_indices:
                                 try:
                                     feat_name = str(feature_names[idx])
-                                    shap_val = float(shap_values[idx])
-                                    feat_value = float(feature_values[idx])
+                                    shap_val_raw = shap_values[idx]
+                                    if hasattr(shap_val_raw, 'shape') and shap_val_raw.shape:
+                                        shap_val = float(shap_val_raw.flatten()[0])
+                                    else:
+                                        shap_val = float(shap_val_raw)
+                                    
+                                    feat_value_raw = feature_values[idx]
+                                    if hasattr(feat_value_raw, 'shape') and feat_value_raw.shape:
+                                        feat_value = float(feat_value_raw.flatten()[0])
+                                    else:
+                                        feat_value = float(feat_value_raw)
                                     
                                     # Determine category
                                     if feat_name.startswith('fred_'):
@@ -3341,6 +3354,8 @@ def generate_signals_with_ensemble(stock_data, ensemble_model, macro_metadata, t
                                     })
                                 except (IndexError, ValueError, TypeError) as idx_error:
                                     logger.warning(f"Skipping invalid SHAP feature at index {idx}: {idx_error}")
+                                    logger.warning(f"  Feature name: {feature_names[idx] if idx < len(feature_names) else 'INDEX_OUT_OF_RANGE'}")
+                                    logger.warning(f"  SHAP value shape: {getattr(shap_values[idx], 'shape', 'NO_SHAPE') if idx < len(shap_values) else 'INDEX_OUT_OF_RANGE'}")
                                     continue
                             
                             shap_display = ' | '.join(formatted_features) if formatted_features else "SHAP analysis incomplete"
