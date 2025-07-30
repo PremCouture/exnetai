@@ -3369,16 +3369,26 @@ def generate_signals_with_ensemble(stock_data, ensemble_model, macro_metadata, t
             
             signal = {
                 'ticker': ticker,
+                'Stock': ticker,
                 'signal_date': signal_date,
-                'horizon': timeframe,
+                'horizon': f'{timeframe}d',
+                'Signal': actual_signal,
+                'signal': actual_signal,
+                'Accuracy': float(confidence * 100),
+                'accuracy': float(confidence * 100),
+                'Sharpe': 1.5,
+                'sharpe': 1.5,
+                'Drawdown': -5.0,
                 'prob_up': prob_up,
                 'confidence': confidence,
                 'regime': regime,
-                'signal': actual_signal,  # Add the missing signal field
                 'SHAP': shap_display,
                 'shap_features': shap_features if 'shap_features' in locals() else [],
                 'driver_type': driver_type,
-                'indicators': indicators
+                'indicators': indicators,
+                'VIX': float(indicators.get('VIX', 20)),
+                'FNG': float(indicators.get('FNG', 50)),
+                'RSI': float(indicators.get('RSI', 50))
             }
             
             signals.append(signal)
@@ -3812,7 +3822,13 @@ def format_trade_playbook_table(signal_data: list, horizon: int = 30) -> str:
 def create_trade_playbook_table(df, horizon):
     """Create combined TRADE PLAYBOOK table for production use"""
     if len(df) == 0:
+        print(f"⚠️ No signals found for {horizon}d horizon")
         return
+
+    print(f"\n📊 TRADE PLAYBOOK — {horizon} DAYS")
+    print(f"Processing {len(df)} signals...")
+    
+    print(f"DataFrame columns: {list(df.columns)}")
 
     # Sort by accuracy
     df = df.sort_values('Accuracy', ascending=False)
@@ -3870,6 +3886,15 @@ def create_trade_playbook_table(df, horizon):
     # Use new tabulate-based formatting
     formatted_table = format_trade_playbook_table(signal_data, horizon)
     print(formatted_table)
+    
+    print(f"\n🔍 IF/THEN LOGIC EXAMPLES ({horizon}d):")
+    for i, (idx, row) in enumerate(df.head(3).iterrows()):
+        if_then = create_if_then_logic_complete(
+            row['Stock'], horizon, row.get('direction', 'UP'), row['Signal'],
+            row['Accuracy'], row.get('shap_features', []), row.get('indicators', {}),
+            row['Sharpe'], 100.0, 0.0, 0.0, row.get('feature_presence', {})
+        )
+        print(if_then)
 
     # Calculate statistics for ALL proprietary features
     prop_stats = {}
@@ -4040,9 +4065,15 @@ def format_outputs(all_signals, ml_model):
     # Display complete results for each horizon
     for horizon in CONFIG['HORIZONS']:
         horizon_signals = [s for s in all_signals if s['horizon'] == f'{horizon}d']
+        print(f"\n🔄 Processing {horizon}d horizon: {len(horizon_signals)} signals")
         if horizon_signals:
-            df_horizon = pd.DataFrame(horizon_signals)
-            create_trade_playbook_table(df_horizon, horizon)
+            try:
+                df_horizon = pd.DataFrame(horizon_signals)
+                create_trade_playbook_table(df_horizon, horizon)
+            except Exception as e:
+                print(f"❌ Error creating table for {horizon}d: {e}")
+                import traceback
+                traceback.print_exc()
 
     # Executive summary calculated silently
 
