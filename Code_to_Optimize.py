@@ -2997,6 +2997,7 @@ class EnsembleTradingModel:
         self.macro_model = UniversalMacroModel()
         self.technical_models = {}  # {ticker: StockTechnicalModel}
         self.ensemble_weights = {'macro': 0.4, 'technical': 0.6}  # Configurable weights
+        self.feature_presence_matrix = {}  # For heatmap compatibility
         
     def train_ensemble(self, stock_data, macro_metadata, prediction_days=30):
         """Train the complete ensemble system with optimized feature caching"""
@@ -3110,10 +3111,21 @@ class EnsembleTradingModel:
             features_aligned = features_aligned.fillna(0)
             features_scaled = scaler.transform(features_aligned.values)
             
-            tech_shap_values = explainer.shap_values(features_scaled)
-            if isinstance(tech_shap_values, list):
-                tech_shap_values = tech_shap_values[1]
-            tech_shap = tech_shap_values[0] if len(tech_shap_values.shape) > 1 else tech_shap_values
+            try:
+                tech_shap_values = explainer.shap_values(features_scaled)
+                if isinstance(tech_shap_values, list):
+                    tech_shap_values = tech_shap_values[1] if len(tech_shap_values) > 1 else tech_shap_values[0]
+                
+                if hasattr(tech_shap_values, 'shape'):
+                    if len(tech_shap_values.shape) > 1:
+                        tech_shap = tech_shap_values[0] if tech_shap_values.shape[0] > 0 else tech_shap_values.flatten()
+                    else:
+                        tech_shap = tech_shap_values
+                else:
+                    tech_shap = np.array(tech_shap_values).flatten()
+            except Exception as e:
+                logger.error(f"Error processing technical SHAP values: {e}")
+                tech_shap = None
         
         # Combine SHAP values with weights
         combined_shap_values = []
@@ -3153,6 +3165,43 @@ class EnsembleTradingModel:
             'feature_names': combined_feature_names,
             'feature_values': np.array(combined_feature_values)
         }
+    
+    def create_feature_presence_heatmap(self, output_path=None):
+        """Create heatmap showing feature type presence - compatibility method for EnsembleTradingModel"""
+        if not self.feature_presence_matrix:
+            logger.warning("No feature presence data available for ensemble heatmap")
+            return
+            
+        try:
+            # Use the macro model's heatmap functionality if available
+            if hasattr(self.macro_model, 'feature_presence_matrix') and self.macro_model.feature_presence_matrix:
+                # Create a simple heatmap using macro model data
+                import matplotlib.pyplot as plt
+                import seaborn as sns
+                
+                # Convert feature presence data to DataFrame for heatmap
+                presence_data = []
+                for ticker, presence in self.macro_model.feature_presence_matrix.items():
+                    presence_data.append(presence)
+                
+                if presence_data:
+                    df_presence = pd.DataFrame(presence_data)
+                    
+                    plt.figure(figsize=(12, 8))
+                    sns.heatmap(df_presence, annot=True, cmap='RdYlBu_r', cbar_kws={'label': 'Feature Presence'})
+                    plt.title('Ensemble Model Feature Presence Heatmap')
+                    plt.tight_layout()
+                    
+                    if output_path:
+                        plt.savefig(f'{output_path}_ensemble_heatmap.png', dpi=300, bbox_inches='tight')
+                    plt.close()
+                    
+                    logger.info(f"Ensemble feature presence heatmap saved to {output_path}_ensemble_heatmap.png")
+            else:
+                logger.info("Ensemble heatmap: Using simplified feature presence tracking")
+                
+        except Exception as e:
+            logger.error(f"Error creating ensemble heatmap: {e}")
 
 # ==========================
 # SIGNAL GENERATION
@@ -3248,51 +3297,75 @@ def generate_signals_with_ensemble(stock_data, ensemble_model, macro_metadata, t
                     feature_names = shap_explanation['feature_names']
                     feature_values = shap_explanation['feature_values']
                     
-                    # Get top 2 features by absolute SHAP value
-                    abs_shap = np.abs(shap_values)
-                    top_indices = np.argsort(abs_shap)[-2:][::-1]
-                    
-                    formatted_features = []
-                    
-                    for idx in top_indices:
-                        feat_name = feature_names[idx]
-                        shap_val = shap_values[idx]
-                        feat_value = feature_values[idx]
-                        
-                        # Determine category
-                        if feat_name.startswith('fred_'):
-                            category = 'macro'
-                        else:
-                            category = 'proprietary'  # Simplified categorization
-                        
-                        feature_presence[category] += 1
-                        
-                        formatted = format_shap_feature_complete(feat_name, shap_val, feat_value, category)
-                        formatted_features.append(formatted)
-                        
-                        shap_features.append({
-                            'feature': feat_name,
-                            'shap_value': float(shap_val),
-                            'feature_type': category,
-                            'actual_value': float(feat_value),
-                            'rank': len(shap_features) + 1
-                        })
-                    
-                    shap_display = ' | '.join(formatted_features)
-                    
-                    # Determine driver type
-                    if feature_presence['proprietary'] >= 2:
-                        driver_type = 'Proprietary-driven'
-                    elif feature_presence['macro'] >= 2:
-                        driver_type = 'Macro-driven'
-                    else:
+                    # Ensure arrays are properly shaped and handle edge cases
+                    if len(shap_values) == 0 or len(feature_names) == 0:
+                        logger.warning(f"Empty SHAP data for {ticker}, using fallback")
+                        shap_display = "SHAP analysis unavailable"
                         driver_type = 'Mixed-diverse'
+                    else:
+                        # Safely get top 2 features by absolute SHAP value
+                        shap_array = np.array(shap_values)
+                        if shap_array.ndim > 1:
+                            shap_array = shap_array.flatten()
+                        abs_shap = np.abs(shap_array)
+                        n_features = min(2, len(abs_shap))
                         
+                        if n_features > 0:
+                            top_indices = np.argsort(abs_shap)[-n_features:][::-1]
+                            
+                            formatted_features = []
+                            
+                            for idx in top_indices:
+                                try:
+                                    feat_name = str(feature_names[idx])
+                                    shap_val = float(shap_values[idx])
+                                    feat_value = float(feature_values[idx])
+                                    
+                                    # Determine category
+                                    if feat_name.startswith('fred_'):
+                                        category = 'macro'
+                                    else:
+                                        category = 'proprietary'
+                                    
+                                    feature_presence[category] += 1
+                                    
+                                    formatted = format_shap_feature_complete(feat_name, shap_val, feat_value, category)
+                                    formatted_features.append(formatted)
+                                    
+                                    shap_features.append({
+                                        'feature': feat_name,
+                                        'shap_value': shap_val,
+                                        'feature_type': category,
+                                        'actual_value': feat_value,
+                                        'rank': len(shap_features) + 1
+                                    })
+                                except (IndexError, ValueError, TypeError) as idx_error:
+                                    logger.warning(f"Skipping invalid SHAP feature at index {idx}: {idx_error}")
+                                    continue
+                            
+                            shap_display = ' | '.join(formatted_features) if formatted_features else "SHAP analysis incomplete"
+                            
+                            # Determine driver type
+                            if feature_presence['proprietary'] >= 2:
+                                driver_type = 'Proprietary-driven'
+                            elif feature_presence['macro'] >= 2:
+                                driver_type = 'Macro-driven'
+                            else:
+                                driver_type = 'Mixed-diverse'
+                        else:
+                            shap_display = "SHAP analysis unavailable"
+                            driver_type = 'Mixed-diverse'
+                    
                 except Exception as e:
-                    logger.error(f"Error processing ensemble SHAP for {ticker}: {e}")
+                    logger.warning(f"SHAP processing failed for {ticker}: {e}")
+                    shap_display = "SHAP analysis unavailable"
+                    driver_type = 'Mixed-diverse'
             
             # Calculate combination-based confidence
             confidence = calculate_combination_confidence(prob_up, indicators, regime, top_features_by_type)
+            
+            # Determine actual signal based on probability and confidence
+            actual_signal = determine_combination_signal(prob_up, confidence, indicators, regime)
             
             signal = {
                 'ticker': ticker,
@@ -3301,8 +3374,9 @@ def generate_signals_with_ensemble(stock_data, ensemble_model, macro_metadata, t
                 'prob_up': prob_up,
                 'confidence': confidence,
                 'regime': regime,
+                'signal': actual_signal,  # Add the missing signal field
                 'SHAP': shap_display,
-                'shap_features': shap_features,
+                'shap_features': shap_features if 'shap_features' in locals() else [],
                 'driver_type': driver_type,
                 'indicators': indicators
             }
@@ -3982,9 +4056,9 @@ def format_outputs(all_signals, ml_model):
 
     # Final summary calculated silently
     total_signals = len(all_signals)
-    buy_signals = len([s for s in all_signals if s['Signal'] in ['BUY', 'STRONG BUY']])
-    sell_signals = len([s for s in all_signals if s['Signal'] in ['SELL', 'STRONG SELL']])
-    unique_stocks = len(set([s['Stock'] for s in all_signals]))
+    buy_signals = len([s for s in all_signals if s.get('signal', 'UNKNOWN') in ['BUY', 'STRONG BUY']])
+    sell_signals = len([s for s in all_signals if s.get('signal', 'UNKNOWN') in ['SELL', 'STRONG SELL']])
+    unique_stocks = len(set([s.get('Stock', s.get('stock', 'UNKNOWN')) for s in all_signals]))
     # Signal summary calculated silently
 
     # Complete legend and explanations calculated silently
@@ -4108,28 +4182,50 @@ def main():
     except:
         IN_COLAB = False
 
+    if IN_COLAB:
+        CONFIG['STOCK_DATA_PATH'] = '/content/drive/MyDrive/csv_files/stock_csvs/data'
+        CONFIG['FRED_ROOT_PATH'] = '/content/drive/MyDrive/csv_files/fred_csvs'
+        print(f"🔧 Colab detected - Updated paths:")
+        print(f"   Stock data: {CONFIG['STOCK_DATA_PATH']}")
+        print(f"   FRED data: {CONFIG['FRED_ROOT_PATH']}")
+
     import warnings
     warnings.filterwarnings('ignore')
     
-    # Set logging to WARNING level for performance
+    # Set logging to INFO level for data loading, WARNING for performance
     import logging
-    logging.getLogger().setLevel(logging.WARNING)
+    if IN_COLAB:
+        logging.getLogger().setLevel(logging.INFO)  # More verbose for Colab debugging
+    else:
+        logging.getLogger().setLevel(logging.WARNING)
 
     try:
+        print("🔄 Loading stock and FRED data...")
         merged_stock_data, macro_metadata, stock_data = load_data()
         if merged_stock_data is None:
+            print("❌ Data loading failed - no stock data found")
+            print(f"   Check that data exists in: {CONFIG['STOCK_DATA_PATH']}")
+            print(f"   Check that FRED data exists in: {CONFIG['FRED_ROOT_PATH']}")
             return
         
+        print(f"✅ Data loaded successfully: {len(merged_stock_data)} stocks")
+        print(f"   Tickers: {list(merged_stock_data.keys())}")
+        
+        print("🔄 Generating features...")
         features_by_stock = generate_features(merged_stock_data, macro_metadata)
         
+        print("🔄 Training universal macro model ensemble...")
         ml_model, all_signals = train_model(merged_stock_data, macro_metadata, CONFIG['HORIZONS'])
         
         ml_model._pregenerated_features = features_by_stock
 
+        print("🔄 Running SHAP analysis...")
         all_signals = run_shap(ml_model, all_signals)
 
-        
+        print("🔄 Formatting trading analysis output...")
         format_outputs(all_signals, ml_model)
+        
+        print("✅ Universal macro model pipeline completed successfully!")
         
         gc.collect()
 
@@ -4158,7 +4254,7 @@ def save_complete_analysis_results(signals, ml_model, output_prefix):
         'total_signals': len(signals),
         'horizons': list(set([s['horizon'] for s in signals])),
         'stocks_analyzed': list(set([s['ticker'] for s in signals])),
-        'signal_distribution': dict(pd.Series([s['signal'] for s in signals]).value_counts()),
+        'signal_distribution': dict(pd.Series([s.get('signal', 'UNKNOWN') for s in signals]).value_counts()),
         'driver_distribution': dict(pd.Series([s['driver_type'] for s in signals]).value_counts()),
         'proprietary_feature_statistics': {},
         'feature_type_coverage': {}
