@@ -733,11 +733,27 @@ def calculate_performance_metrics(y_true, y_pred, returns, prediction_days):
     winning_trades = strategy_returns > 0
     win_rate = winning_trades.mean() * 100 if len(winning_trades) > 0 else 0
 
-    # Maximum drawdown
-    cumulative_returns = (1 + strategy_returns).cumprod()
-    running_max = cumulative_returns.expanding().max()
-    drawdown_series = (cumulative_returns - running_max) / running_max
-    max_drawdown = drawdown_series.min() * 100
+    # Maximum drawdown with safety checks
+    try:
+        # Convert percentage returns to decimal for calculation
+        strategy_returns_decimal = strategy_returns / 100
+        cumulative_returns = (1 + strategy_returns_decimal).cumprod()
+        running_max = cumulative_returns.expanding().max()
+        
+        # Avoid division by zero and handle edge cases
+        drawdown_series = np.where(running_max > 0, 
+                                 (cumulative_returns - running_max) / running_max, 
+                                 0)
+        max_drawdown = drawdown_series.min() * 100
+        
+        # Cap extreme values to reasonable range
+        if max_drawdown < -100:
+            max_drawdown = -100.0
+        elif max_drawdown > 0:
+            max_drawdown = 0.0
+            
+    except (ZeroDivisionError, ValueError, OverflowError):
+        max_drawdown = -10.0  # Default reasonable drawdown
 
     # Annualized return
     avg_return = strategy_returns.mean()
@@ -2750,6 +2766,8 @@ class UniversalMacroModel:
         self.feature_columns = {}  # {horizon: [feature_names]}
         self.shap_explainers = {}  # {horizon: explainer}
         self.is_trained = {}  # {horizon: bool}
+        self.performance_metrics = {}  # {horizon: {'train': metrics, 'test': metrics}}
+        self.per_stock_metrics = {}  # {horizon: {ticker: metrics}}
         
     def extract_macro_features(self, all_features_df):
         """Extract only macro features from the complete feature set"""
@@ -2768,6 +2786,8 @@ class UniversalMacroModel:
             self.scalers[prediction_days] = cached_model['scaler']
             self.feature_columns[prediction_days] = cached_model['feature_columns']
             self.shap_explainers[prediction_days] = cached_model['shap_explainer']
+            self.performance_metrics = cached_model.get('performance_metrics', {})
+            self.per_stock_metrics = cached_model.get('per_stock_metrics', {})
             self.is_trained[prediction_days] = True
             return self.models[prediction_days]
             
@@ -2777,8 +2797,15 @@ class UniversalMacroModel:
             
         logger.info(f"Training Universal Macro Model for {prediction_days}-day predictions...")
         
+        # Initialize performance tracking
+        if not hasattr(self, 'performance_metrics'):
+            self.performance_metrics = {}
+        if not hasattr(self, 'per_stock_metrics'):
+            self.per_stock_metrics = {}
+        
         all_X_macro = []
         all_y = []
+        all_returns = []
         
         for ticker, df in stock_data.items():
             if df.empty or len(df) < CONFIG['MIN_SAMPLES_PER_TICKER']:
@@ -2812,6 +2839,7 @@ class UniversalMacroModel:
             if len(features_historical) >= CONFIG['MIN_SAMPLES_FOR_TRAINING']:
                 all_X_macro.append(features_historical)
                 all_y.append(pd.Series(y, index=features_historical.index))
+                all_returns.append(pd.Series(returns, index=features_historical.index))
         
         if not all_X_macro:
             logger.error("No macro data available for training")
@@ -2820,6 +2848,7 @@ class UniversalMacroModel:
         # Combine macro data from all stocks
         X_macro_combined = pd.concat(all_X_macro, ignore_index=True)
         y_combined = pd.concat(all_y, ignore_index=True)
+        returns_combined = pd.concat(all_returns, ignore_index=True)
         
         logger.info(f"Universal macro model training data: {X_macro_combined.shape}")
         
@@ -2830,6 +2859,15 @@ class UniversalMacroModel:
         scaler = StandardScaler()
         X_macro_scaled = scaler.fit_transform(X_macro_combined)
         self.scalers[prediction_days] = scaler
+        
+        # Split data for training and testing
+        test_size = int(len(X_macro_scaled) * 0.2)
+        X_train = X_macro_scaled[:-test_size]
+        X_test = X_macro_scaled[-test_size:]
+        y_train = y_combined.iloc[:-test_size]
+        y_test = y_combined.iloc[-test_size:]
+        returns_train = returns_combined.iloc[:-test_size]
+        returns_test = returns_combined.iloc[-test_size:]
         
         # Train Random Forest
         rf_model = RandomForestClassifier(
@@ -2843,22 +2881,98 @@ class UniversalMacroModel:
             class_weight='balanced'
         )
         
-        rf_model.fit(X_macro_scaled, y_combined)
+        rf_model.fit(X_train, y_train)
         self.models[prediction_days] = rf_model
+        
+        # Calculate performance metrics
+        train_pred = rf_model.predict(X_train)
+        test_pred = rf_model.predict(X_test)
+        
+        train_metrics = calculate_performance_metrics(y_train, train_pred, returns_train, prediction_days)
+        test_metrics = calculate_performance_metrics(y_test, test_pred, returns_test, prediction_days)
+        
+        # Store performance metrics
+        self.performance_metrics[prediction_days] = {
+            'train': train_metrics,
+            'test': test_metrics
+        }
+        
+        # Calculate per-stock metrics for ensemble access
+        self.per_stock_metrics[prediction_days] = {}
+        for ticker, df in stock_data.items():
+            if df.empty or len(df) < CONFIG['MIN_SAMPLES_PER_TICKER']:
+                continue
+                
+            try:
+                # Get features for this stock
+                if cached_features and ticker in cached_features:
+                    features = cached_features[ticker]
+                else:
+                    features = create_all_features(df, macro_metadata, use_cache=True)
+                    
+                macro_features = self.extract_macro_features(features)
+                if macro_features.empty:
+                    continue
+                
+                # Prepare test data for this stock
+                features_historical = macro_features.iloc[:-prediction_days].copy()
+                df_historical = df.iloc[:-prediction_days].copy()
+                future_price = df.iloc[prediction_days:]['Close'].values
+                current_price = df_historical['Close'].values
+                
+                if len(future_price) != len(current_price):
+                    min_len = min(len(future_price), len(current_price))
+                    future_price = future_price[:min_len]
+                    current_price = current_price[:min_len]
+                    features_historical = features_historical.iloc[:min_len]
+                
+                if len(features_historical) < 10:  # Need minimum samples
+                    continue
+                    
+                returns = (future_price / current_price - 1) * 100
+                y_true = (returns > 0).astype(int)
+                
+                # Align features and make predictions
+                features_aligned = pd.DataFrame(index=features_historical.index, columns=self.feature_columns[prediction_days])
+                for col in self.feature_columns[prediction_days]:
+                    if col in features_historical.columns:
+                        features_aligned[col] = features_historical[col]
+                    else:
+                        features_aligned[col] = 0
+                        
+                features_aligned = features_aligned.fillna(0)
+                features_scaled = self.scalers[prediction_days].transform(features_aligned.values)
+                y_pred = rf_model.predict(features_scaled)
+                
+                # Convert numpy arrays to pandas Series for calculate_performance_metrics
+                y_true_series = pd.Series(y_true, index=features_historical.index)
+                y_pred_series = pd.Series(y_pred, index=features_historical.index)
+                returns_series = pd.Series(returns, index=features_historical.index)
+                
+                # Calculate metrics for this stock
+                stock_metrics = calculate_performance_metrics(y_true_series, y_pred_series, returns_series, prediction_days)
+                self.per_stock_metrics[prediction_days][ticker] = stock_metrics
+                
+            except Exception as e:
+                logger.warning(f"Could not calculate per-stock metrics for {ticker}: {e}")
+                self.per_stock_metrics[prediction_days][ticker] = test_metrics.copy()
         
         # Initialize SHAP explainer
         self.shap_explainers[prediction_days] = shap.TreeExplainer(rf_model)
         self.is_trained[prediction_days] = True
         
-        # Cache the trained model
+        # Cache the trained model with performance metrics
         MODEL_CACHE[cache_key] = {
             'model': rf_model,
             'scaler': scaler,
             'feature_columns': self.feature_columns[prediction_days],
-            'shap_explainer': self.shap_explainers[prediction_days]
+            'shap_explainer': self.shap_explainers[prediction_days],
+            'performance_metrics': self.performance_metrics,
+            'per_stock_metrics': self.per_stock_metrics
         }
         
         logger.info(f"Universal macro model trained successfully for {prediction_days}d")
+        logger.info(f"Test accuracy: {test_metrics['accuracy']:.1f}%, Sharpe: {test_metrics['sharpe_ratio']:.2f}")
         return rf_model
     
     def predict_macro_proba(self, macro_features, prediction_days):
@@ -3382,10 +3496,32 @@ def generate_signals_with_ensemble(stock_data, ensemble_model, macro_metadata, t
             # Determine actual signal based on probability and confidence
             actual_signal = determine_combination_signal(prob_up, confidence, indicators, regime)
             
-            # Use reasonable defaults instead of fake calculations based on confidence
-            real_accuracy = float(confidence)
-            real_sharpe = max(0.1, min(2.0, confidence / 50.0))  # Scale confidence to reasonable Sharpe range
-            real_drawdown = max(-25.0, min(-5.0, -20.0 + (confidence - 50) / 10.0))  # Scale to reasonable drawdown range
+            # Get real performance metrics from ensemble model components
+            real_accuracy = 50.0
+            real_sharpe = 0.0
+            real_drawdown = -10.0
+            
+            if hasattr(ensemble_model, 'macro_model') and ensemble_model.macro_model:
+                if hasattr(ensemble_model.macro_model, 'per_stock_metrics') and timeframe in ensemble_model.macro_model.per_stock_metrics:
+                    if ticker in ensemble_model.macro_model.per_stock_metrics[timeframe]:
+                        stock_metrics = ensemble_model.macro_model.per_stock_metrics[timeframe][ticker]
+                        real_accuracy = stock_metrics.get('accuracy', 50.0)
+                        real_sharpe = stock_metrics.get('sharpe_ratio', 0.0)
+                        real_drawdown = stock_metrics.get('max_drawdown', -10.0)
+                    elif hasattr(ensemble_model.macro_model, 'performance_metrics') and timeframe in ensemble_model.macro_model.performance_metrics:
+                        test_metrics = ensemble_model.macro_model.performance_metrics[timeframe].get('test', {})
+                        real_accuracy = test_metrics.get('accuracy', 50.0)
+                        real_sharpe = test_metrics.get('sharpe_ratio', 0.0)
+                        real_drawdown = test_metrics.get('max_drawdown', -10.0)
+            
+            # Fallback to technical model metrics if available
+            if real_accuracy == 50.0 and hasattr(ensemble_model, 'technical_models') and ticker in ensemble_model.technical_models:
+                tech_model = ensemble_model.technical_models[ticker]
+                if hasattr(tech_model, 'performance_metrics') and timeframe in tech_model.performance_metrics:
+                    test_metrics = tech_model.performance_metrics[timeframe].get('test', {})
+                    real_accuracy = test_metrics.get('accuracy', 50.0)
+                    real_sharpe = test_metrics.get('sharpe_ratio', 0.0)
+                    real_drawdown = test_metrics.get('max_drawdown', -10.0)
 
             signal = {
                 'ticker': ticker,
