@@ -40,6 +40,7 @@ DATA_CACHE = {}
 FEATURE_CACHE = {}
 SHAP_CACHE = {}
 EXPLAINER_CACHE = {}
+MODEL_CACHE = {}  # Add model caching for universal macro models
 
 # Global variable for Colab detection
 IN_COLAB = False
@@ -2738,8 +2739,563 @@ class EnhancedTradingModel:
                 logger.warning(f"\nStocks with NO proprietary features in top 2: {stocks_missing_prop}")
 
 # ==========================
+# ==========================
+
+class UniversalMacroModel:
+    """Universal macro model that trains once on FRED/macro features and can be reused across all stocks"""
+    
+    def __init__(self):
+        self.models = {}  # {horizon: trained_model}
+        self.scalers = {}  # {horizon: scaler}
+        self.feature_columns = {}  # {horizon: [feature_names]}
+        self.shap_explainers = {}  # {horizon: explainer}
+        self.is_trained = {}  # {horizon: bool}
+        
+    def extract_macro_features(self, all_features_df):
+        """Extract only macro features from the complete feature set"""
+        macro_cols = [col for col in all_features_df.columns if col.startswith('fred_')]
+        return all_features_df[macro_cols] if macro_cols else pd.DataFrame(index=all_features_df.index)
+    
+    def train_macro_model(self, stock_data, macro_metadata, prediction_days=30):
+        """Train universal macro model using data from all stocks with caching"""
+        cache_key = f"macro_model_{prediction_days}_{hash(str(macro_metadata))}"
+        
+        # Check if already trained and cached
+        if cache_key in MODEL_CACHE:
+            logger.info(f"Using cached universal macro model for {prediction_days}d")
+            cached_model = MODEL_CACHE[cache_key]
+            self.models[prediction_days] = cached_model['model']
+            self.scalers[prediction_days] = cached_model['scaler']
+            self.feature_columns[prediction_days] = cached_model['feature_columns']
+            self.shap_explainers[prediction_days] = cached_model['shap_explainer']
+            self.is_trained[prediction_days] = True
+            return self.models[prediction_days]
+            
+        if self.is_trained.get(prediction_days, False):
+            logger.info(f"Universal macro model already trained for {prediction_days}d horizon")
+            return self.models[prediction_days]
+            
+        logger.info(f"Training Universal Macro Model for {prediction_days}-day predictions...")
+        
+        all_X_macro = []
+        all_y = []
+        
+        for ticker, df in stock_data.items():
+            if df.empty or len(df) < CONFIG['MIN_SAMPLES_PER_TICKER']:
+                continue
+                
+            # Generate all features to extract macro portion
+            features = create_all_features(df, macro_metadata, use_cache=True)
+            macro_features = self.extract_macro_features(features)
+            
+            if macro_features.empty:
+                continue
+                
+            # Prepare training data (same logic as EnhancedTradingModel)
+            features_historical = macro_features.iloc[:-prediction_days].copy()
+            df_historical = df.iloc[:-prediction_days].copy()
+            future_price = df.iloc[prediction_days:]['Close'].values
+            current_price = df_historical['Close'].values
+            
+            if len(future_price) != len(current_price):
+                min_len = min(len(future_price), len(current_price))
+                future_price = future_price[:min_len]
+                current_price = current_price[:min_len]
+                features_historical = features_historical.iloc[:min_len]
+            
+            returns = (future_price / current_price - 1) * 100
+            y = (returns > 0).astype(int)
+            
+            if len(features_historical) >= CONFIG['MIN_SAMPLES_FOR_TRAINING']:
+                all_X_macro.append(features_historical)
+                all_y.append(pd.Series(y, index=features_historical.index))
+        
+        if not all_X_macro:
+            logger.error("No macro data available for training")
+            return None
+            
+        # Combine macro data from all stocks
+        X_macro_combined = pd.concat(all_X_macro, ignore_index=True)
+        y_combined = pd.concat(all_y, ignore_index=True)
+        
+        logger.info(f"Universal macro model training data: {X_macro_combined.shape}")
+        
+        # Store feature columns
+        self.feature_columns[prediction_days] = X_macro_combined.columns.tolist()
+        
+        # Scale features
+        scaler = StandardScaler()
+        X_macro_scaled = scaler.fit_transform(X_macro_combined)
+        self.scalers[prediction_days] = scaler
+        
+        # Train Random Forest
+        rf_model = RandomForestClassifier(
+            n_estimators=CONFIG['N_ESTIMATORS'],
+            max_depth=CONFIG['MAX_DEPTH'],
+            min_samples_split=CONFIG['MIN_SAMPLES_SPLIT'],
+            min_samples_leaf=CONFIG['MIN_SAMPLES_LEAF'],
+            max_features=CONFIG['MAX_FEATURES'],
+            random_state=CONFIG['RANDOM_STATE'],
+            n_jobs=-1,
+            class_weight='balanced'
+        )
+        
+        rf_model.fit(X_macro_scaled, y_combined)
+        self.models[prediction_days] = rf_model
+        
+        # Initialize SHAP explainer
+        self.shap_explainers[prediction_days] = shap.TreeExplainer(rf_model)
+        self.is_trained[prediction_days] = True
+        
+        # Cache the trained model
+        MODEL_CACHE[cache_key] = {
+            'model': rf_model,
+            'scaler': scaler,
+            'feature_columns': self.feature_columns[prediction_days],
+            'shap_explainer': self.shap_explainers[prediction_days]
+        }
+        
+        logger.info(f"Universal macro model trained successfully for {prediction_days}d")
+        return rf_model
+    
+    def predict_macro_proba(self, macro_features, prediction_days):
+        """Get macro prediction probability"""
+        if prediction_days not in self.models:
+            return None
+            
+        model = self.models[prediction_days]
+        scaler = self.scalers[prediction_days]
+        feature_cols = self.feature_columns[prediction_days]
+        
+        # Align features
+        features_aligned = pd.DataFrame(index=macro_features.index, columns=feature_cols)
+        for col in feature_cols:
+            if col in macro_features.columns:
+                features_aligned[col] = macro_features[col]
+            else:
+                features_aligned[col] = 0
+                
+        features_aligned = features_aligned.fillna(0)
+        features_scaled = scaler.transform(features_aligned.values)
+        
+        return model.predict_proba(features_scaled)[0]
+    
+    def get_macro_shap_values(self, macro_features, prediction_days):
+        """Get SHAP values for macro features"""
+        if prediction_days not in self.shap_explainers:
+            return None
+            
+        explainer = self.shap_explainers[prediction_days]
+        scaler = self.scalers[prediction_days]
+        feature_cols = self.feature_columns[prediction_days]
+        
+        # Align and scale features
+        features_aligned = pd.DataFrame(index=macro_features.index, columns=feature_cols)
+        for col in feature_cols:
+            if col in macro_features.columns:
+                features_aligned[col] = macro_features[col]
+            else:
+                features_aligned[col] = 0
+                
+        features_aligned = features_aligned.fillna(0)
+        features_scaled = scaler.transform(features_aligned.values)
+        
+        shap_values = explainer.shap_values(features_scaled)
+        if isinstance(shap_values, list):
+            shap_values = shap_values[1]  # Use positive class
+            
+        return shap_values[0] if len(shap_values.shape) > 1 else shap_values
+
+class StockTechnicalModel:
+    """Stock-specific model for technical and proprietary features"""
+    
+    def __init__(self):
+        self.models = {}  # {(ticker, horizon): model}
+        self.scalers = {}  # {(ticker, horizon): scaler}
+        self.feature_columns = {}  # {(ticker, horizon): [feature_names]}
+        self.shap_explainers = {}  # {(ticker, horizon): explainer}
+        
+    def extract_technical_features(self, all_features_df):
+        """Extract technical and proprietary features (non-macro)"""
+        non_macro_cols = [col for col in all_features_df.columns if not col.startswith('fred_')]
+        return all_features_df[non_macro_cols] if non_macro_cols else pd.DataFrame(index=all_features_df.index)
+    
+    def train_technical_model(self, ticker, df, macro_metadata, prediction_days=30):
+        """Train technical model for specific stock"""
+        model_key = (ticker, prediction_days)
+        
+        logger.info(f"Training technical model for {ticker} ({prediction_days}d)")
+        
+        # Generate all features and extract technical portion
+        features = create_all_features(df, macro_metadata, use_cache=True)
+        technical_features = self.extract_technical_features(features)
+        
+        if technical_features.empty:
+            logger.warning(f"No technical features for {ticker}")
+            return None
+            
+        # Prepare training data
+        features_historical = technical_features.iloc[:-prediction_days].copy()
+        df_historical = df.iloc[:-prediction_days].copy()
+        future_price = df.iloc[prediction_days:]['Close'].values
+        current_price = df_historical['Close'].values
+        
+        if len(future_price) != len(current_price):
+            min_len = min(len(future_price), len(current_price))
+            future_price = future_price[:min_len]
+            current_price = current_price[:min_len]
+            features_historical = features_historical.iloc[:min_len]
+        
+        returns = (future_price / current_price - 1) * 100
+        y = (returns > 0).astype(int)
+        
+        if len(features_historical) < CONFIG['MIN_SAMPLES_FOR_TRAINING']:
+            logger.warning(f"Insufficient technical data for {ticker}")
+            return None
+            
+        # Store feature columns
+        self.feature_columns[model_key] = features_historical.columns.tolist()
+        
+        # Scale features
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(features_historical)
+        self.scalers[model_key] = scaler
+        
+        # Train Random Forest
+        rf_model = RandomForestClassifier(
+            n_estimators=CONFIG['N_ESTIMATORS']//2,  # Smaller since fewer features
+            max_depth=CONFIG['MAX_DEPTH'],
+            min_samples_split=CONFIG['MIN_SAMPLES_SPLIT'],
+            min_samples_leaf=CONFIG['MIN_SAMPLES_LEAF'],
+            max_features=CONFIG['MAX_FEATURES'],
+            random_state=CONFIG['RANDOM_STATE'],
+            n_jobs=-1,
+            class_weight='balanced'
+        )
+        
+        rf_model.fit(X_scaled, y)
+        self.models[model_key] = rf_model
+        
+        # Initialize SHAP explainer
+        self.shap_explainers[model_key] = shap.TreeExplainer(rf_model)
+        
+        logger.info(f"Technical model trained for {ticker}")
+        return rf_model
+
+class EnsembleTradingModel:
+    """Ensemble model combining universal macro model with stock-specific technical models"""
+    
+    def __init__(self):
+        self.macro_model = UniversalMacroModel()
+        self.technical_models = {}  # {ticker: StockTechnicalModel}
+        self.ensemble_weights = {'macro': 0.4, 'technical': 0.6}  # Configurable weights
+        
+    def train_ensemble(self, stock_data, macro_metadata, prediction_days=30):
+        """Train the complete ensemble system"""
+        logger.info(f"Training Ensemble Model for {prediction_days}-day predictions...")
+        
+        macro_model = self.macro_model.train_macro_model(stock_data, macro_metadata, prediction_days)
+        if macro_model is None:
+            logger.error("Failed to train macro model")
+            return None
+            
+        # 2. Train technical models for each stock
+        for ticker, df in stock_data.items():
+            if df.empty or len(df) < CONFIG['MIN_SAMPLES_PER_TICKER']:
+                continue
+                
+            if ticker not in self.technical_models:
+                self.technical_models[ticker] = StockTechnicalModel()
+                
+            tech_model = self.technical_models[ticker].train_technical_model(
+                ticker, df, macro_metadata, prediction_days
+            )
+            
+        logger.info(f"Ensemble training completed for {prediction_days}d")
+        return self
+    
+    def predict_ensemble_proba(self, ticker, features, prediction_days):
+        """Get ensemble prediction combining macro and technical models"""
+        # Extract macro and technical features
+        macro_features = self.macro_model.extract_macro_features(features)
+        
+        if ticker not in self.technical_models:
+            logger.warning(f"No technical model for {ticker}")
+            return self.macro_model.predict_macro_proba(macro_features, prediction_days)
+            
+        technical_features = self.technical_models[ticker].extract_technical_features(features)
+        
+        # Get predictions from both models
+        macro_proba = self.macro_model.predict_macro_proba(macro_features, prediction_days)
+        
+        model_key = (ticker, prediction_days)
+        if model_key not in self.technical_models[ticker].models:
+            logger.warning(f"No technical model for {ticker}")
+            return macro_proba
+            
+        tech_model = self.technical_models[ticker].models[model_key]
+        tech_scaler = self.technical_models[ticker].scalers[model_key]
+        tech_feature_cols = self.technical_models[ticker].feature_columns[model_key]
+        
+        # Align technical features
+        features_aligned = pd.DataFrame(index=technical_features.index, columns=tech_feature_cols)
+        for col in tech_feature_cols:
+            if col in technical_features.columns:
+                features_aligned[col] = technical_features[col]
+            else:
+                features_aligned[col] = 0
+                
+        features_aligned = features_aligned.fillna(0)
+        tech_features_scaled = tech_scaler.transform(features_aligned.values)
+        tech_proba = tech_model.predict_proba(tech_features_scaled)[0]
+        
+        # Combine predictions using weighted average
+        if macro_proba is not None and tech_proba is not None:
+            ensemble_proba = (
+                self.ensemble_weights['macro'] * macro_proba + 
+                self.ensemble_weights['technical'] * tech_proba
+            )
+            return ensemble_proba
+        elif macro_proba is not None:
+            return macro_proba
+        else:
+            return tech_proba
+    
+    def get_ensemble_shap_explanation(self, ticker, features, prediction_days):
+        """Get combined SHAP explanation from both models"""
+        # Extract features for both models
+        macro_features = self.macro_model.extract_macro_features(features)
+        
+        if ticker not in self.technical_models:
+            return None
+            
+        technical_features = self.technical_models[ticker].extract_technical_features(features)
+        
+        # Get SHAP values from both models
+        macro_shap = self.macro_model.get_macro_shap_values(macro_features, prediction_days)
+        
+        model_key = (ticker, prediction_days)
+        tech_shap = None
+        if model_key in self.technical_models[ticker].shap_explainers:
+            explainer = self.technical_models[ticker].shap_explainers[model_key]
+            scaler = self.technical_models[ticker].scalers[model_key]
+            feature_cols = self.technical_models[ticker].feature_columns[model_key]
+            
+            # Align and scale technical features
+            features_aligned = pd.DataFrame(index=technical_features.index, columns=feature_cols)
+            for col in feature_cols:
+                if col in technical_features.columns:
+                    features_aligned[col] = technical_features[col]
+                else:
+                    features_aligned[col] = 0
+                    
+            features_aligned = features_aligned.fillna(0)
+            features_scaled = scaler.transform(features_aligned.values)
+            
+            tech_shap_values = explainer.shap_values(features_scaled)
+            if isinstance(tech_shap_values, list):
+                tech_shap_values = tech_shap_values[1]
+            tech_shap = tech_shap_values[0] if len(tech_shap_values.shape) > 1 else tech_shap_values
+        
+        # Combine SHAP values with weights
+        combined_shap_values = []
+        combined_feature_names = []
+        combined_feature_values = []
+        
+        if macro_shap is not None:
+            macro_feature_cols = self.macro_model.feature_columns[prediction_days]
+            weighted_macro_shap = macro_shap * self.ensemble_weights['macro']
+            combined_shap_values.extend(weighted_macro_shap)
+            combined_feature_names.extend(macro_feature_cols)
+            
+            macro_features_aligned = pd.DataFrame(index=macro_features.index, columns=macro_feature_cols)
+            for col in macro_feature_cols:
+                if col in macro_features.columns:
+                    macro_features_aligned[col] = macro_features[col]
+                else:
+                    macro_features_aligned[col] = 0
+            combined_feature_values.extend(macro_features_aligned.iloc[-1].values)
+        
+        if tech_shap is not None:
+            tech_feature_cols = self.technical_models[ticker].feature_columns[model_key]
+            weighted_tech_shap = tech_shap * self.ensemble_weights['technical']
+            combined_shap_values.extend(weighted_tech_shap)
+            combined_feature_names.extend(tech_feature_cols)
+            
+            tech_features_aligned = pd.DataFrame(index=technical_features.index, columns=tech_feature_cols)
+            for col in tech_feature_cols:
+                if col in technical_features.columns:
+                    tech_features_aligned[col] = technical_features[col]
+                else:
+                    tech_features_aligned[col] = 0
+            combined_feature_values.extend(tech_features_aligned.iloc[-1].values)
+        
+        return {
+            'shap_values': np.array(combined_shap_values),
+            'feature_names': combined_feature_names,
+            'feature_values': np.array(combined_feature_values)
+        }
+
+# ==========================
 # SIGNAL GENERATION
 # ==========================
+
+def generate_signals_with_ensemble(stock_data, ensemble_model, macro_metadata, timeframe=30):
+    """Generate trading signals using ensemble model"""
+    signals = []
+    
+    # Calculate market metrics (same as before)
+    market_metrics = {}
+    for ticker, df in stock_data.items():
+        if len(df) < 60:
+            continue
+            
+        try:
+            current_price = float(df['Close'].iloc[-1])
+            sma20_series = df['Close'].rolling(20).mean()
+            sma20 = float(sma20_series.iloc[-1]) if not pd.isna(sma20_series.iloc[-1]) else current_price
+            
+            price_20d_ago = float(df['Close'].iloc[-20])
+            momentum_20d = (current_price / price_20d_ago - 1) * 100 if price_20d_ago > 0 else 0.0
+            
+            rsi_series = calculate_rsi(df['Close'])
+            rsi_val = float(rsi_series.iloc[-1]) if not pd.isna(rsi_series.iloc[-1]) else 50.0
+            
+            market_metrics[ticker] = {
+                'momentum_20d': momentum_20d,
+                'rsi': rsi_val,
+                'above_sma20': current_price > sma20,
+                'df': df,
+                'current_date': df['Date'].iloc[-1] if 'Date' in df.columns else pd.Timestamp.now()
+            }
+        except Exception as e:
+            logger.error(f"Error calculating metrics for {ticker}: {e}")
+            continue
+    
+    if not market_metrics:
+        return signals
+        
+    # Calculate market regime
+    stocks_above_sma20 = sum(1 for m in market_metrics.values() if m['above_sma20'])
+    market_breadth = stocks_above_sma20 / len(market_metrics)
+    
+    if market_breadth > 0.65:
+        regime = 'BULL'
+    elif market_breadth < 0.35:
+        regime = 'BEAR'
+    else:
+        regime = 'NEUTRAL'
+    
+    logger.info(f"Generating ensemble signals for {timeframe}-day horizon")
+    logger.info(f"Market regime: {regime}, processing {len(market_metrics)} stocks...")
+    
+    # Generate signals for each stock using ensemble
+    for ticker, metrics in market_metrics.items():
+        df = metrics['df']
+        signal_date = metrics['current_date']
+        
+        try:
+            # Generate features
+            features = create_all_features(df, macro_metadata, use_cache=True)
+            if features.empty:
+                continue
+                
+            # Get last row of features
+            last_features = features.iloc[-1:].copy()
+            
+            # Get ensemble prediction
+            proba = ensemble_model.predict_ensemble_proba(ticker, last_features, timeframe)
+            if proba is None:
+                continue
+                
+            prob_up = float(proba[1])
+            
+            # Get ensemble SHAP explanation
+            shap_explanation = ensemble_model.get_ensemble_shap_explanation(ticker, last_features, timeframe)
+            
+            # Calculate ALL indicators
+            indicators = calculate_indicators(df)
+            
+            # Process SHAP explanation (same logic as original)
+            shap_features = []
+            shap_display = 'N/A'
+            top_features_by_type = None
+            feature_presence = defaultdict(int)
+            driver_type = 'Unknown'
+            
+            if shap_explanation:
+                try:
+                    # Get top features from combined SHAP values
+                    shap_values = shap_explanation['shap_values']
+                    feature_names = shap_explanation['feature_names']
+                    feature_values = shap_explanation['feature_values']
+                    
+                    # Get top 2 features by absolute SHAP value
+                    abs_shap = np.abs(shap_values)
+                    top_indices = np.argsort(abs_shap)[-2:][::-1]
+                    
+                    formatted_features = []
+                    
+                    for idx in top_indices:
+                        feat_name = feature_names[idx]
+                        shap_val = shap_values[idx]
+                        feat_value = feature_values[idx]
+                        
+                        # Determine category
+                        if feat_name.startswith('fred_'):
+                            category = 'macro'
+                        else:
+                            category = 'proprietary'  # Simplified categorization
+                        
+                        feature_presence[category] += 1
+                        
+                        formatted = format_shap_feature_complete(feat_name, shap_val, feat_value, category)
+                        formatted_features.append(formatted)
+                        
+                        shap_features.append({
+                            'feature': feat_name,
+                            'shap_value': float(shap_val),
+                            'feature_type': category,
+                            'actual_value': float(feat_value),
+                            'rank': len(shap_features) + 1
+                        })
+                    
+                    shap_display = ' | '.join(formatted_features)
+                    
+                    # Determine driver type
+                    if feature_presence['proprietary'] >= 2:
+                        driver_type = 'Proprietary-driven'
+                    elif feature_presence['macro'] >= 2:
+                        driver_type = 'Macro-driven'
+                    else:
+                        driver_type = 'Mixed-diverse'
+                        
+                except Exception as e:
+                    logger.error(f"Error processing ensemble SHAP for {ticker}: {e}")
+            
+            # Calculate combination-based confidence
+            confidence = calculate_combination_confidence(prob_up, indicators, regime, top_features_by_type)
+            
+            signal = {
+                'ticker': ticker,
+                'signal_date': signal_date,
+                'horizon': timeframe,
+                'prob_up': prob_up,
+                'confidence': confidence,
+                'regime': regime,
+                'SHAP': shap_display,
+                'shap_features': shap_features,
+                'driver_type': driver_type,
+                'indicators': indicators
+            }
+            
+            signals.append(signal)
+            
+        except Exception as e:
+            logger.error(f"Error generating ensemble signal for {ticker}: {e}")
+            continue
+    
+    return signals
 
 def generate_signals_with_shap(stock_data, ml_model, macro_metadata, timeframe=30):
     """Generate trading signals with comprehensive SHAP explanations and importance filtering"""
@@ -3336,44 +3892,42 @@ def generate_features(merged_stock_data, macro_metadata, use_cache=True):
     return features_by_stock
 
 def train_model(merged_stock_data, macro_metadata, horizons):
-    """Aggressively optimized model training with batch processing"""
+    """Train ensemble model with universal macro model and stock-specific technical models"""
     import time
     start_time = time.time()
-    # Training models with aggressive optimization
     
-    # Initialize model
-    ml_model = EnhancedTradingModel()
+    # Initialize ensemble model
+    ensemble_model = EnsembleTradingModel()
     
     # Store all signals
     all_signals = []
 
-    # Train models and generate signals for each horizon
+    # Train ensemble for each horizon
     for i, horizon in enumerate(horizons):
         horizon_start = time.time()
 
-        # Train model
-        # Training ML model for horizon-day predictions
-        model_start = time.time()
-        model = ml_model.train_model(merged_stock_data, macro_metadata, horizon)
+        logger.info(f"Training ensemble model for {horizon}-day predictions...")
+        model = ensemble_model.train_ensemble(merged_stock_data, macro_metadata, horizon)
 
         if model is None:
             continue
 
-        # Generate signals
+        # Generate signals using ensemble
         signal_start = time.time()
-        signals = generate_signals_with_shap(merged_stock_data, ml_model, macro_metadata, horizon)
+        signals = generate_signals_with_ensemble(merged_stock_data, ensemble_model, macro_metadata, horizon)
 
         # Add to all signals
         all_signals.extend(signals)
 
         import gc
-        del model, signals
+        del signals
         gc.collect()
         horizon_time = time.time() - horizon_start
-        logger.info(f"Completed {horizon}-day horizon in {horizon_time:.2f}s with aggressive memory cleanup")
+        logger.info(f"Completed {horizon}-day horizon in {horizon_time:.2f}s with ensemble architecture")
 
     total_time = time.time() - start_time
-    return ml_model, all_signals
+    logger.info(f"Total ensemble training time: {total_time:.2f}s")
+    return ensemble_model, all_signals
 
 def run_shap(ml_model, all_signals, batch_size=50):
     """Optimized SHAP analysis with batching"""
