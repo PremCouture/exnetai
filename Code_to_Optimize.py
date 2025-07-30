@@ -2756,7 +2756,7 @@ class UniversalMacroModel:
         macro_cols = [col for col in all_features_df.columns if col.startswith('fred_')]
         return all_features_df[macro_cols] if macro_cols else pd.DataFrame(index=all_features_df.index)
     
-    def train_macro_model(self, stock_data, macro_metadata, prediction_days=30):
+    def train_macro_model(self, stock_data, macro_metadata, prediction_days=30, cached_features=None):
         """Train universal macro model using data from all stocks with caching"""
         cache_key = f"macro_model_{prediction_days}_{hash(str(macro_metadata))}"
         
@@ -2784,8 +2784,11 @@ class UniversalMacroModel:
             if df.empty or len(df) < CONFIG['MIN_SAMPLES_PER_TICKER']:
                 continue
                 
-            # Generate all features to extract macro portion
-            features = create_all_features(df, macro_metadata, use_cache=True)
+            if cached_features and ticker in cached_features:
+                features = cached_features[ticker]
+            else:
+                features = create_all_features(df, macro_metadata, use_cache=True)
+                
             macro_features = self.extract_macro_features(features)
             
             if macro_features.empty:
@@ -2920,14 +2923,19 @@ class StockTechnicalModel:
         non_macro_cols = [col for col in all_features_df.columns if not col.startswith('fred_')]
         return all_features_df[non_macro_cols] if non_macro_cols else pd.DataFrame(index=all_features_df.index)
     
-    def train_technical_model(self, ticker, df, macro_metadata, prediction_days=30):
+    def train_technical_model(self, ticker, df, macro_metadata, prediction_days=30, cached_features=None):
         """Train technical model for specific stock"""
         model_key = (ticker, prediction_days)
         
         logger.info(f"Training technical model for {ticker} ({prediction_days}d)")
         
-        # Generate all features and extract technical portion
-        features = create_all_features(df, macro_metadata, use_cache=True)
+        if cached_features and ticker in cached_features:
+            features = cached_features[ticker]
+            logger.info(f"Using cached features for {ticker}")
+        else:
+            logger.info(f"Generating features for {ticker} (cached_features: {cached_features is not None})")
+            features = create_all_features(df, macro_metadata, use_cache=True)
+            
         technical_features = self.extract_technical_features(features)
         
         if technical_features.empty:
@@ -2991,15 +2999,25 @@ class EnsembleTradingModel:
         self.ensemble_weights = {'macro': 0.4, 'technical': 0.6}  # Configurable weights
         
     def train_ensemble(self, stock_data, macro_metadata, prediction_days=30):
-        """Train the complete ensemble system"""
+        """Train the complete ensemble system with optimized feature caching"""
         logger.info(f"Training Ensemble Model for {prediction_days}-day predictions...")
         
-        macro_model = self.macro_model.train_macro_model(stock_data, macro_metadata, prediction_days)
+        logger.info("Generating features for all stocks (one-time cost)...")
+        cached_features = {}
+        for ticker, df in stock_data.items():
+            if df.empty or len(df) < CONFIG['MIN_SAMPLES_PER_TICKER']:
+                continue
+            cached_features[ticker] = create_all_features(df, macro_metadata, use_cache=True)
+        
+        # 2. Train universal macro model once using cached features
+        macro_model = self.macro_model.train_macro_model(
+            stock_data, macro_metadata, prediction_days, cached_features
+        )
         if macro_model is None:
             logger.error("Failed to train macro model")
             return None
             
-        # 2. Train technical models for each stock
+        # 3. Train technical models for each stock using cached features
         for ticker, df in stock_data.items():
             if df.empty or len(df) < CONFIG['MIN_SAMPLES_PER_TICKER']:
                 continue
@@ -3008,7 +3026,7 @@ class EnsembleTradingModel:
                 self.technical_models[ticker] = StockTechnicalModel()
                 
             tech_model = self.technical_models[ticker].train_technical_model(
-                ticker, df, macro_metadata, prediction_days
+                ticker, df, macro_metadata, prediction_days, cached_features
             )
             
         logger.info(f"Ensemble training completed for {prediction_days}d")
